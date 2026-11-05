@@ -250,13 +250,15 @@ named the original author's domain. A site exists here for nothing but the feed,
 and the feed is already a file on main, so from 1.1.8.2 `SUFeedURL` reads it
 from `raw.githubusercontent.com` and committing it is publishing it. GitHub
 caches raw files for a few minutes, which delays an offer and loses nothing. The
-one copy polling the Pages address is why Pages stays published until that copy
-has taken 1.1.8.2, and is unpublished then: switched off first, it would never
-hear of another release. `docs/index.html` is gone too, being the original
-author's page about the product, and the suite fails if it comes back. The
-README says what this fork changes and nothing else, with one line naming the
-original project, the repository offers no sponsor button, and the copyright
-notice stays in `LICENSE`, as MIT asks.
+one copy polling the Pages address was why Pages stayed published, and the
+release workflow asked it to rebuild, until that copy had taken 1.1.8.2:
+switched off first, it would never have heard of another release. It moved on by
+itself, Pages was unpublished, and the rebuild step went with it.
+`docs/index.html` is gone too, being the original author's page about the
+product, and the suite fails if it comes back. The README says what this fork
+changes and nothing else, with one line naming the original project, the
+repository offers no sponsor button, and the copyright notice stays in
+`LICENSE`, as MIT asks.
 
 The release itself runs in CI from `.github/workflows/release.yml`, started by
 hand from main once `VERSION` has been bumped. It hands `release.sh` the
