@@ -3,6 +3,24 @@
     <channel>
         <title>Claude Graft</title>
         <item>
+            <title>1.1.8.4</title>
+            <pubDate>Thu, 05 Nov 2026 21:11:10 +0000</pubDate>
+            <link>https://github.com/nikitaus/claude-graft</link>
+            <sparkle:version>1.1.8.4</sparkle:version>
+            <sparkle:shortVersionString>1.1.8.4</sparkle:shortVersionString>
+            <sparkle:minimumAutoupdateVersion>1.1.0</sparkle:minimumAutoupdateVersion>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Maintenance</h2>
+
+<p>Nothing changes in how Graft works. This release goes out the way every one
+from this fork does, and the restart it causes is the moment the last usage
+figure from Anthropic should carry over rather than fall back to an older one.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>
+]]></description>
+            <enclosure url="https://github.com/nikitaus/claude-graft/releases/download/v1.1.8.4/ClaudeGraft-1.1.8.4.zip" length="4758162" type="application/octet-stream" sparkle:edSignature="AV6Uzulcorb+yGXFyHOeTVFEndeENdtmhRijlsd8Dt+csp68gatckMZ/3xpodyzp9L17cjgEc514JvUA32ZGAw=="/>
+        </item>
+        <item>
             <title>1.1.8.3</title>
             <pubDate>Thu, 05 Nov 2026 20:54:04 +0000</pubDate>
             <link>https://github.com/nikitaus/claude-graft</link>
