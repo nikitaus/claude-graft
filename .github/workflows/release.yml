@@ -22,6 +22,8 @@ on:
 permissions:
   # The tag, the release and the appcast commit.
   contents: write
+  # Rebuilding the old address while it is still published; see the last step.
+  pages: write
 
 # Two releases at once would both read the same appcast and each add one entry
 # to it, and whichever pushed second would drop the other's.
@@ -125,3 +127,16 @@ jobs:
           git add docs/appcast.xml
           git commit -m "Release $version"
           git push origin HEAD:main
+
+      # 1.1.8.1 was born polling the feed through Pages rather than off main,
+      # and a push from here is not sure to rebuild that copy of it. While Pages
+      # is still published the rebuild is asked for, so that copy is offered
+      # the release that moves it; once Pages is gone there is nothing to ask.
+      - name: Rebuild the old address while it is still published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/pages" >/dev/null 2>&1; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" >/dev/null \
+              || echo "::warning::Pages did not take the rebuild request."
+          fi
