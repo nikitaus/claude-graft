@@ -3,6 +3,27 @@
     <channel>
         <title>Claude Graft</title>
         <item>
+            <title>1.1.8.3</title>
+            <pubDate>Thu, 05 Nov 2026 20:54:04 +0000</pubDate>
+            <link>https://github.com/nikitaus/claude-graft</link>
+            <sparkle:version>1.1.8.3</sparkle:version>
+            <sparkle:shortVersionString>1.1.8.3</sparkle:shortVersionString>
+            <sparkle:minimumAutoupdateVersion>1.1.0</sparkle:minimumAutoupdateVersion>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Usage survives a restart</h2>
+
+<p>Graft kept the last figure Anthropic gave for each account only while it was
+running. After an update, a login or a relaunch it started with nothing, and if
+Anthropic was rate-limiting usage checks just then, an account fell back to the
+figure its profile had recorded itself, which could be hours old. The last live
+figure is now kept on disk, so after a restart each account goes on showing it,
+labelled with when it was really taken, until a new one arrives.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>
+]]></description>
+            <enclosure url="https://github.com/nikitaus/claude-graft/releases/download/v1.1.8.3/ClaudeGraft-1.1.8.3.zip" length="4758165" type="application/octet-stream" sparkle:edSignature="3AFUUgbI7h/nCxKF7htKIW2Ldomawf0ynTYbMq92BaYLBco7cMjfP4CxJ0CPehVRUd0066xFbeYe/JxGZOj9Bg=="/>
+        </item>
+        <item>
             <title>1.1.8.2</title>
             <pubDate>Thu, 05 Nov 2026 20:38:14 +0000</pubDate>
             <link>https://github.com/nikitaus/claude-graft</link>
