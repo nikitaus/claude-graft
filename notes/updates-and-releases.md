@@ -242,8 +242,11 @@ release from here is installed from its disk image and every one after arrives
 by itself. Its number is `1.1.8.1` rather than anything the original project
 could ship: two builds under one number are a thing no feed can tell apart, and
 a shortcut refreshes its launcher only when the number changes. `docs/CNAME` is
-gone for the same reason the feed moved — it named the original author's domain,
-which Pages would otherwise try to serve this fork from.
+gone because it named the original author's domain, which Pages would otherwise
+try to serve this fork from, and `docs/index.html` is gone because it is the
+original author's page about the product: served from this fork's Pages it read
+as this fork passing itself off as that product. Pages here serves the feed and
+nothing else, and the suite fails if the page comes back.
 
 The release itself runs in CI from `.github/workflows/release.yml`, started by
 hand from main once `VERSION` has been bumped. It hands `release.sh` the

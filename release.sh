@@ -48,8 +48,8 @@ if git -C "$ROOT" rev-parse "$TAG" >/dev/null 2>&1; then
 fi
 
 # The icon is drawn rather than stored, so a clean checkout builds the same one.
-# The site's copy comes out of the same run: two files drawn by one program
-# cannot end up showing different marks.
+# The README's copy in docs/assets comes out of the same run: two files drawn by
+# one program cannot end up showing different marks.
 if [ ! -f "$ROOT/Resources/AppIcon.icns" ]; then
     echo "drawing the icon"
     ICONSET="$(mktemp -d)/AppIcon.iconset"
