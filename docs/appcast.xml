@@ -3,6 +3,33 @@
     <channel>
         <title>Claude Graft</title>
         <item>
+            <title>1.1.8.1</title>
+            <pubDate>Thu, 05 Nov 2026 20:19:05 +0000</pubDate>
+            <link>https://github.com/nikitaus/claude-graft</link>
+            <sparkle:version>1.1.8.1</sparkle:version>
+            <sparkle:shortVersionString>1.1.8.1</sparkle:shortVersionString>
+            <sparkle:minimumAutoupdateVersion>1.1.0</sparkle:minimumAutoupdateVersion>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Usage for plans without a five-hour window</h2>
+
+<p>Ultra is spent against the week alone, and Graft used to refuse every usage
+answer that came without a five-hour figure. Those accounts showed "the usage
+service sent something unexpected" and fell back to figures recorded days or
+weeks earlier. They now show their week and their Fable share, live from
+Anthropic, with no five-hour bar, and the number in the menu bar is the week.</p>
+
+<p>When a figure cannot be had live, the line under the account now says why:
+a login that has run out, one Anthropic refused, a rate limit, or no answer at
+all. Before, every one of those read as the service not answering.</p>
+
+<p>Updates now come from this fork's own releases rather than the original
+project's feed.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>
+]]></description>
+            <enclosure url="https://github.com/nikitaus/claude-graft/releases/download/v1.1.8.1/ClaudeGraft-1.1.8.1.zip" length="4736140" type="application/octet-stream" sparkle:edSignature="jAvYttjBTuZPIAvT8umqTQwT7l+oTKLHuZcjJgCUGjDQdlCz5fSOTC/iz5R6JYsceaJchTs6QozgW9njfQrwBg=="/>
+        </item>
+        <item>
             <title>1.1.8</title>
             <pubDate>Fri, 06 Nov 2026 00:38:42 +0530</pubDate>
             <link>https://github.com/aaditya-v-more/claude-graft</link>
