@@ -6,6 +6,18 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      # GitHub runs short of Apple silicon machines, and a job that waits for
+      # one is withdrawn after a quarter of an hour without a step having run.
+      # The Intel image builds both architectures all the same, since every
+      # slice is cross-compiled whichever one the machine is.
+      runner:
+        description: Machine to build on. Pick Intel when Apple silicon ones are short.
+        type: choice
+        options:
+          - macos-latest
+          - macos-15-intel
+        default: macos-latest
 
 permissions:
   # The tag, the release and the appcast commit.
@@ -21,7 +33,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner }}
     env:
       # A clone the runner cannot authenticate fails rather than waiting on a
       # prompt nobody will answer. release.sh tries the Homebrew tap this way.
@@ -41,6 +53,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # The two images carry different Xcodes, and which SDK compiled a
+      # release is the first question when one fails on one and not the other.
+      - name: Which Xcode and SDK
+        run: |
+          xcodebuild -version
+          echo "SDK $(xcrun --show-sdk-version)"
 
       - name: Restore vendored Sparkle
         uses: actions/cache@v4
