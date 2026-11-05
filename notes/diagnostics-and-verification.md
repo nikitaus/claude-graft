@@ -116,8 +116,9 @@ on a `macos-15-intel` machine in eight minutes: the suite, the universal build
 with both slices checked, the disk image and the zip on a GitHub release, and a
 signed appcast entry under this fork's key committed to main, the feed going
 from 19 entries to 20. It was installed by hand, as a first copy from a new feed
-has to be. An update arriving from that feed by itself is the half not yet seen,
-and the next release is what will show it.
+has to be. The other half has been seen since: 1.1.8.2 and 1.1.8.3 went out
+through the same workflow, and the installed copy moved on to 1.1.8.3 by itself,
+reading the feed straight off main after 1.1.8.2 had moved it there.
 
 Unproven: **Start Session** has never successfully opened a window. It POSTs one
 Haiku message with `max_tokens: 4` and Claude Code's system prompt, which these
