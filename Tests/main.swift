@@ -898,16 +898,33 @@ do {
     check(Graft.usage(of: profile)?.isStale == true,
           "a sample older than the five-hour window is stale")
 
+    func writeSamples(_ samples: [[String: Any]]) {
+        try! JSONSerialization.data(withJSONObject: ["version": 2, "samples": samples] as [String: Any])
+            .write(to: profile.appending(path: "plan-usage-history.json"))
+    }
+
     // Claude has been seen to write samples with a missing figure.
-    let partial: [String: Any] = [
-        "version": 2,
-        "samples": [["t": now, "org": "ORG1", "u": ["sd": 5]],
-                    ["t": now - 1000, "org": "ORG1", "u": ["fh": 7, "sd": 8]]],
-    ]
-    try! JSONSerialization.data(withJSONObject: partial)
-        .write(to: profile.appending(path: "plan-usage-history.json"))
+    writeSamples([["t": now - 1000, "org": "ORG1", "u": ["fh": 7, "sd": 8]],
+                  ["t": now, "org": "ORG1", "u": ["sd": 5]]])
     check(Graft.usage(of: profile)?.fiveHour == 7,
-          "a sample missing a figure is skipped for the last complete one")
+          "a sample missing the five-hour figure keeps the one recorded just before it")
+    check(Graft.usage(of: profile)?.week == 5, "while the week comes from the newest sample")
+
+    // Ultra is spent against the week alone. Requiring both figures left a
+    // profile on it reporting the last sample from before the plan changed,
+    // days old, with that Claude open and writing.
+    writeSamples([["t": now - 4 * 24 * 3_600_000, "org": "ORG1", "u": ["fh": 5, "sd": 60]],
+                  ["t": now, "org": "ORG1", "u": ["fh": NSNull(), "sd": 11]]])
+    let weekOnly = Graft.usage(of: profile)
+    check(weekOnly?.week == 11, "a history that records the week alone is read up to its newest sample")
+    check(weekOnly != nil && weekOnly?.fiveHour == nil,
+          "with no five-hour figure carried over from days before")
+    check(weekOnly != nil && weekOnly?.fiveHourReset == nil, "nor a five-hour reset to count down to")
+    check(weekOnly?.headline == 11, "and the week is the figure it leads with")
+
+    writeSamples([["t": now, "org": "ORG1", "u": ["fh": 5.4, "sd": 11.6]]])
+    check(Graft.usage(of: profile)?.fiveHour == 5 && Graft.usage(of: profile)?.week == 12,
+          "a figure written with a fraction is read rather than skipped")
 
     try! Data("not json".utf8).write(to: profile.appending(path: "plan-usage-history.json"))
     check(Graft.usage(of: profile) == nil, "a corrupt history is ignored rather than fatal")
@@ -1169,9 +1186,40 @@ do {
     let expected = ISO8601DateFormatter().date(from: "2026-08-24T09:30:00Z")
     check(reading?.fiveHourReset == expected, "the reset time is exactly what was sent")
 
-    check(UsageAPI.reading(from: ["seven_day": ["utilization": 10]]) == nil,
-          "an answer without the five-hour window is refused")
-    check(UsageAPI.reading(from: [:]) == nil, "and so is an empty one")
+    // Ultra has no five-hour window, and refusing an answer without one is
+    // what put "the usage service sent something unexpected" under every
+    // account on that plan.
+    let ultraBody: [String: Any] = [
+        "five_hour": NSNull(),
+        "seven_day": ["utilization": 11, "resets_at": "2026-11-11T21:00:00Z"],
+        "limits": [[
+            "kind": "weekly_scoped",
+            "percent": 0,
+            "resets_at": "2026-11-11T21:00:00Z",
+            "scope": ["model": ["display_name": "Fable"]],
+        ]],
+        "subscription_type": "ultra",
+    ]
+    let ultra = UsageAPI.reading(from: ultraBody)
+    check(ultra?.week == 11, "a plan with no five-hour window is read for its week rather than refused")
+    check(ultra != nil && ultra?.fiveHour == nil,
+          "and is not given a five-hour figure it was never sent")
+    check(ultra?.weekReset != nil, "its weekly reset comes through")
+    check(ultra?.fable == 0, "its Fable share is read beside it")
+    check(ultra?.plan == "Ultra", "and the plan is named")
+    check(UsageAPI.reading(from: ["seven_day": ["utilization": 10]])?.week == 10,
+          "a five-hour window left out altogether reads the same as one sent as null")
+    check(UsageAPI.reading(from: [:]) == nil, "an answer carrying neither window is still refused")
+    check(UsageAPI.reading(from: ["limits": [Any](), "subscription_type": "max"]) == nil,
+          "and so is one carrying everything but the windows")
+
+    // What is written down when an answer cannot be read: enough to see which
+    // part moved, and none of the figures themselves.
+    let described = UsageAPI.shape(of: ultraBody) as? [String: Any]
+    check(described?["five_hour"] as? String == "null", "an unreadable answer is described by its shape")
+    check((described?["seven_day"] as? [String: Any])?["utilization"] as? String == "number",
+          "naming the kind of each value rather than the value")
+    check((described?["subscription_type"] as? String) == "string", "a string's text is left out too")
 
     let epoch: [String: Any] = ["five_hour": ["utilization": 5, "resets_at": 1_800_000_000]]
     check(UsageAPI.reading(from: epoch)?.fiveHourReset != nil, "epoch seconds parse too")
@@ -2335,11 +2383,11 @@ do {
 
 section("Menu bar figure")
 
-func entry(_ name: String, fiveHour: Int, running: Bool, live: Bool = true,
+func entry(_ name: String, fiveHour: Int?, week: Int = 0, running: Bool, live: Bool = true,
            sampled: Date = Date()) -> UsageMonitor.Entry {
     UsageMonitor.Entry(name: name,
                        profile: support.appending(path: name),
-                       usage: Graft.Usage(fiveHour: fiveHour, week: 0,
+                       usage: Graft.Usage(fiveHour: fiveHour, week: week,
                                           organization: nil, sampled: sampled),
                        isRunning: running,
                        shortcut: nil,
@@ -2369,6 +2417,15 @@ do {
     monitor.setEntriesForTesting([entry("Claude", fiveHour: 99, running: false, live: false, sampled: old),
                                   entry("Claude 2", fiveHour: 12, running: false, live: false)])
     check(monitor.headline == 12, "a stale figure is left out")
+
+    // A plan with no five-hour window is spent against its week, and a bar
+    // reading 0% for it would look like an account with nothing used.
+    monitor.setEntriesForTesting([entry("Claude", fiveHour: nil, week: 64, running: true)])
+    check(monitor.headline == 64, "an account with no five-hour window leads with its week")
+    monitor.setEntriesForTesting([entry("Claude", fiveHour: nil, week: 64, running: false),
+                                  entry("Claude 2", fiveHour: 80, week: 10, running: false)])
+    check(monitor.headlineEntry?.name == "Claude 2",
+          "and is weighed against the others by the figure it leads with")
 
     monitor.setEntriesForTesting([])
     check(monitor.headline == nil, "nothing to show when there is nothing to show")

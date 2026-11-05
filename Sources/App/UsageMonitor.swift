@@ -233,10 +233,10 @@ final class UsageMonitor: ObservableObject {
         }
         let running = usable.filter(\.isRunning)
         let pool = running.isEmpty ? usable : running
-        return pool.max { ($0.usage?.fiveHour ?? 0) < ($1.usage?.fiveHour ?? 0) }
+        return pool.max { ($0.usage?.headline ?? 0) < ($1.usage?.headline ?? 0) }
     }
 
-    var headline: Int? { headlineEntry?.usage?.fiveHour }
+    var headline: Int? { headlineEntry?.usage?.headline }
 
     /// What the last pass found for one profile, for a view that shows a single
     /// account rather than all of them.
@@ -440,7 +440,7 @@ final class UsageMonitor: ObservableObject {
             if let refreshed = entry.refreshed { row["refreshedAt"] = stamp.string(from: refreshed) }
             if let note = entry.note { row["note"] = note }
             if let usage = entry.usage {
-                row["fiveHour"] = usage.fiveHour
+                if let fiveHour = usage.fiveHour { row["fiveHour"] = fiveHour }
                 row["week"] = usage.week
                 if let reset = usage.fiveHourReset { row["fiveHourReset"] = stamp.string(from: reset) }
                 if let reset = usage.weekReset { row["weekReset"] = stamp.string(from: reset) }

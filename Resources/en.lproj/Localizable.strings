@@ -2,6 +2,7 @@
 "%@ are already open on the same Claude Code chats.\n\nBoth instances write to the same chat files. Opening the same conversation in two of them at once can lose messages." = "%@ are already open on the same Claude Code chats.\n\nBoth instances write to the same chat files. Opening the same conversation in two of them at once can lose messages.";
 "%@ is already open on the same Claude Code chats.\n\nBoth instances write to the same chat files. Opening the same conversation in two of them at once can lose messages." = "%@ is already open on the same Claude Code chats.\n\nBoth instances write to the same chat files. Opening the same conversation in two of them at once can lose messages.";
 "%@: %ld%% of 5 hours, %ld%% of the week" = "%@: %ld%% of 5 hours, %ld%% of the week";
+"%@: %ld%% of the week" = "%@: %ld%% of the week";
 "%@%" = "%@%";
 "%ldd %ldh %ldm" = "%ldd %ldh %ldm";
 "%ldh %ldm" = "%ldh %ldm";

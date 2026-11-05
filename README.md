@@ -83,6 +83,9 @@ Graft reads each profile's access token and sends it only to `api.anthropic.com`
 it leaves refresh tokens and logins alone. Choose **Always Allow**
 at the keychain prompt; a new Graft build may ask again.
 
+A plan without a five-hour window, such as Ultra, shows its week and its Fable
+share, and the number in the menu bar is then the week.
+
 **Start Session** sends one short request to open that account's five-hour
 window. It uses a few tokens and runs only when you press it.
 

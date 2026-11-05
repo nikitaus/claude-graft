@@ -1114,10 +1114,32 @@ token and `anthropic-beta: oauth-2025-04-20`. It answers with `five_hour` and
 `subscription_type`, a `limits` array of `weekly_scoped` per-model windows, and
 `extra_usage` credits. The last two are parsed but not shown anywhere yet.
 
+**A plan need not have a five-hour window at all.** Ultra is spent against the
+week alone, with Fable allowed a share of it, and Claude's own usage page shows
+those two rows and nothing else. The parser required `five_hour` and refused
+every answer that lacked it, so on the machine this was reported from both
+accounts read "the usage service sent something unexpected" and showed figures a
+month old as though they were the account's. Whether that answer sends the
+window as null or leaves it out was not seen, so the two are read the same:
+either window is enough, `fiveHour` is nil rather than zero, no five-hour bar is
+drawn, and the menu bar leads with the week instead. An answer that still cannot
+be read is written to `diagnostics.log` as `usage-unreadable`, by its keys and
+the kind of value under each, so the next change to the shape names itself.
+
 `plan-usage-history.json` is the fallback: samples of `{t, org, u:{fh, sd}}`
 where `fh` is the five-hour percentage used and `sd` the seven-day one, written
 only while that instance runs. It is ~180KB and grows, so it is parsed once per
 change and cached against modification time and size.
+
+A sample needs `sd` and nothing else, for the same reason. On that same machine
+a Claude that was open, green dot and all, reported a sample four days old,
+which is what requiring both figures does to a profile whose samples stopped
+carrying `fh` when the plan changed — whether that is what it writes now was not
+seen, and nothing else about the history needs it to be. A sample that leaves
+`fh` out keeps the figure from the one before it, but only from within five
+hours, or a plan that lost the window would go on showing its last figure for
+ever. Either figure may carry a fraction; `Graft.percentage` reads both shapes
+for both sources.
 
 Claude Code's command line keeps **one** login for the whole machine in the
 keychain, so `CLAUDE_CONFIG_DIR` does not isolate accounts. That is why Start
@@ -1332,6 +1354,11 @@ Unproven: **Start Session** has never successfully opened a window. It POSTs one
 Haiku message with `max_tokens: 4` and Claude Code's system prompt, which these
 tokens are minted for. If that turns out to be wrong the API's own error message
 surfaces in the UI rather than being swallowed — read it rather than guessing.
+
+The week-only answer has not been seen from the endpoint itself, only inferred
+from the refusal and from Claude's own usage page. If an Ultra account still
+reads "something unexpected", the `usage-unreadable` line in `diagnostics.log`
+says what came back.
 
 `~/Library/Application Support/ClaudeGraft/usage-status.json` records what each
 poll found, including whether the figures came from the API. Read it to check

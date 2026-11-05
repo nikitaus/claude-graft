@@ -2035,7 +2035,10 @@ enum Graft {
     /// the profile. `fh` is the five-hour window, `sd` the seven-day one, both
     /// percentages already used.
     struct Usage: Equatable {
-        var fiveHour: Int
+        /// Nil for a plan that has no five-hour window at all, which is not the
+        /// same as one with nothing spent in it. Ultra has only the week, and
+        /// requiring this figure refused every answer such an account got.
+        var fiveHour: Int?
         var week: Int
         var organization: String?
         var sampled: Date
@@ -2050,6 +2053,22 @@ enum Graft {
         /// Claude only writes this while it is running, so an old sample says
         /// nothing useful about a five-hour window that has since rolled over.
         var isStale: Bool { Date().timeIntervalSince(sampled) > 5 * 60 * 60 }
+
+        /// The figure the menu bar leads with. A plan without a five-hour
+        /// window is spent against its week, so that is the number that runs
+        /// out; leading with nothing would read as an account with no limit.
+        var headline: Int { fiveHour ?? week }
+    }
+
+    /// A percentage as the service or a profile writes one: whole, or with a
+    /// fraction. Reading only whole numbers skipped every sample that carried
+    /// a fraction as though it were missing a figure.
+    static func percentage(_ value: Any?) -> Int? {
+        switch value {
+        case let number as Int: return number
+        case let number as Double: return Int(number.rounded())
+        default: return nil
+        }
     }
 
     /// Parsed history, keyed by file and only re-read when the file changes.
@@ -2087,26 +2106,42 @@ enum Graft {
               let raw = root["samples"] as? [[String: Any]]
         else { return nil }
 
-        // Only samples carrying both figures are usable.
-        var samples: [(time: Date, fiveHour: Int, week: Int, org: String?)] = []
+        // The week is what every plan has, so a sample is usable once it
+        // carries that. Demanding the five-hour figure as well left a profile
+        // on a plan without one reporting the last sample from before it
+        // changed plans, days old, with that Claude open and writing.
+        var samples: [UsageSample] = []
         samples.reserveCapacity(raw.count)
         for sample in raw {
             guard let stamp = sample["t"] as? Double,
                   let values = sample["u"] as? [String: Any],
-                  let fiveHour = values["fh"] as? Int,
-                  let week = values["sd"] as? Int
+                  let week = percentage(values["sd"])
             else { continue }
-            samples.append((Date(timeIntervalSince1970: stamp / 1000), fiveHour, week, sample["org"] as? String))
+            samples.append((Date(timeIntervalSince1970: stamp / 1000), percentage(values["fh"]),
+                            week, sample["org"] as? String))
         }
         guard let latest = samples.last else { return nil }
 
-        return Usage(fiveHour: latest.fiveHour,
+        // Claude has been seen to leave the five-hour figure out of a sample
+        // now and then, so the one just before stands in for it — but only
+        // from within the same five hours, or a plan that no longer has the
+        // window would go on showing the last figure it had for ever.
+        let fiveHours = samples.compactMap { sample in
+            sample.fiveHour.map { (time: sample.time, used: $0) }
+        }
+        let fiveHour = fiveHours.last.flatMap {
+            latest.time.timeIntervalSince($0.time) < fiveHourWindow ? $0.used : nil
+        }
+
+        return Usage(fiveHour: fiveHour,
                      week: latest.week,
                      organization: latest.org,
                      sampled: latest.time,
-                     fiveHourReset: fiveHourReset(from: samples),
+                     fiveHourReset: fiveHour == nil ? nil : fiveHourReset(from: fiveHours),
                      weekReset: weekReset(from: samples))
     }
+
+    private typealias UsageSample = (time: Date, fiveHour: Int?, week: Int, org: String?)
 
     private static let fiveHourWindow: TimeInterval = 5 * 60 * 60
     private static let weekWindow: TimeInterval = 7 * 24 * 60 * 60
@@ -2114,12 +2149,10 @@ enum Graft {
     /// The window opened at the first sample after the figure was last zero,
     /// and closes five hours later. Nothing to report when none is open, or
     /// when the history starts partway through one.
-    private static func fiveHourReset(
-        from samples: [(time: Date, fiveHour: Int, week: Int, org: String?)]
-    ) -> Date? {
-        guard let latest = samples.last, latest.fiveHour > 0 else { return nil }
+    private static func fiveHourReset(from samples: [(time: Date, used: Int)]) -> Date? {
+        guard let latest = samples.last, latest.used > 0 else { return nil }
         for index in stride(from: samples.count - 1, to: 0, by: -1)
-        where samples[index - 1].fiveHour == 0 && samples[index].fiveHour > 0 {
+        where samples[index - 1].used == 0 && samples[index].used > 0 {
             let reset = samples[index].time.addingTimeInterval(fiveHourWindow)
             return reset > Date() ? reset : nil
         }
@@ -2128,9 +2161,7 @@ enum Graft {
 
     /// Weekly resets are a cycle, so the last one seen can be rolled forward
     /// even across stretches where Claude was not running to record it.
-    private static func weekReset(
-        from samples: [(time: Date, fiveHour: Int, week: Int, org: String?)]
-    ) -> Date? {
+    private static func weekReset(from samples: [UsageSample]) -> Date? {
         var lastReset: Date?
         for (previous, current) in zip(samples, samples.dropFirst())
         where current.week < previous.week - 2 {
