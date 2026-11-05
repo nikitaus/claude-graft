@@ -1,0 +1,10 @@
+<h2>Usage survives a restart</h2>
+
+<p>Graft kept the last figure Anthropic gave for each account only while it was
+running. After an update, a login or a relaunch it started with nothing, and if
+Anthropic was rate-limiting usage checks just then, an account fell back to the
+figure its profile had recorded itself, which could be hours old. The last live
+figure is now kept on disk, so after a restart each account goes on showing it,
+labelled with when it was really taken, until a new one arrives.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>

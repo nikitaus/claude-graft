@@ -122,6 +122,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 - **Polling:** `mayUseCache` gives five minutes to a tick, two for an open profile, a minute for the dropdown, two seconds for a press; `arrival` queues rather than drops; failures back off and `Retry-After` wins.
 - **A plan need not have a five-hour window.** Ultra has only the week: either window is enough, `fiveHour` is nil rather than zero, and the menu bar leads with the week. A profile's own sample needs only `sd`.
 - **A row says why its figure is not live** in the words of the error behind it (`failureNote`). A login that failed before anything was sent does not back off.
+- **The last live answer outlives the process** in `live-usage.json`, loaded once on the serial queue before the cache is read or changed, so a restart shows it at its real age instead of falling back to the profile's record.
 
 ### Interface — [notes/interface.md](notes/interface.md)
 

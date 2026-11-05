@@ -169,3 +169,19 @@ rather than minutes later, since there was nothing to be patient with, and
 `usage-failed` and `usage-login-unusable` in `diagnostics.log` carry the status
 code, or each cached entry's expiry and scopes without its token, once each time
 they change.
+
+
+**The last answer outlives the process.** `liveCache` was memory alone, so every
+restart began with nothing: an update installing itself, a login, a relaunch.
+The first pass then asked every account at once, and an answer refused by the
+rate limit left the row on the profile's own record. On the machine this was
+reported from, an Ultra account went in ten minutes from a live 15% of its week
+to a nine-hour-old 0%, across what by its timing was Graft restarting into
+1.1.8.2, which had been published minutes before with the hold switched off.
+Each answer is now written to `ClaudeGraft/live-usage.json` with the moment it
+was taken, and read back once, on the serial queue, before anything reads or
+changes the cache, so a restart shows the last live figure at its real age and
+has no reason to ask straight away for what it knew a minute before.
+`invalidate` loads before it drops, or the file would bring back the very
+reading it had just thrown out, and a reading older than a week stays behind,
+every window it describes having reset.
