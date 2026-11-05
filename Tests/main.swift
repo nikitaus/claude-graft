@@ -1736,6 +1736,37 @@ do {
     check(UsageMonitor.mayAttempt(now: now, until: now.addingTimeInterval(-1),
                                   interactive: false, serverAsked: true),
           "and an expired wait releases either way")
+
+    // Every failure used to read "did not answer", including the ones where
+    // nothing had been sent, so the row never said what would fix it.
+    let silent = L10n.text("Anthropic's usage service did not answer.")
+    check(UsageMonitor.failureNote(for: ClaudeCredentials.Failure.expired)
+            == ClaudeCredentials.Failure.expired.errorDescription,
+          "a login that has run out is named as one, not as a service that did not answer")
+    check(UsageMonitor.failureNote(for: UsageAPI.Failure.http(401, retryAfter: nil))
+            == UsageAPI.Failure.http(401, retryAfter: nil).errorDescription,
+          "a refused login says so")
+    check(UsageMonitor.failureNote(for: UsageAPI.Failure.http(429, retryAfter: 60))
+            == UsageAPI.Failure.http(429, retryAfter: 60).errorDescription,
+          "and so does a rate limit")
+    check(UsageMonitor.failureNote(for: URLError(.timedOut)) == silent,
+          "only a request that got no answer reads as one")
+    check(UsageMonitor.failureNote(for: ClaudeCredentials.Failure.keychainDeclined)
+            == L10n.text("Live usage needs keychain access."),
+          "a shut keychain keeps its own short line")
+
+    check(!UsageMonitor.backsOff(after: ClaudeCredentials.Failure.expired),
+          "a login that ran out before anything was sent is read again on the next pass")
+    check(!UsageMonitor.backsOff(after: ClaudeCredentials.Failure.notSignedIn),
+          "as is one that could not be read")
+    check(UsageMonitor.backsOff(after: UsageAPI.Failure.http(429, retryAfter: nil)),
+          "while anything the service answered still backs off")
+    check(UsageMonitor.backsOff(after: URLError(.timedOut)), "and so does a request that went unanswered")
+
+    check(UsageMonitor.reasonCode(UsageAPI.Failure.http(429, retryAfter: 120)) == "http 429, retry after 120s",
+          "the log names the status and the wait the service asked for")
+    check(UsageMonitor.reasonCode(ClaudeCredentials.Failure.expired) == "login expired",
+          "and tells a login that ran out from anything the service said")
 }
 
 // MARK: - Telling instances apart

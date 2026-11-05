@@ -1249,6 +1249,19 @@ back off 60/120/300/900/1800 seconds and a success clears the count; a
 `Retry-After` from the service wins and is the one wait a person pressing
 refresh cannot skip.
 
+A login that fails before anything is sent is the exception, and it is also the
+one the row has to name. Every failure but a shut keychain used to read
+"Anthropic's usage service did not answer", including a cached token that had
+run out or never covered `user:profile` — no request made at all — and both
+accounts on the machine this was reported from showed that line with nothing in
+`usage-status.json` to say more. `failureNote` says what happened in the words
+`ClaudeCredentials.Failure` and `UsageAPI.Failure` already had for it,
+`backsOff` lets a login that failed locally be read again on the next pass
+rather than minutes later, since there was nothing to be patient with, and
+`usage-failed` and `usage-login-unusable` in `diagnostics.log` carry the status
+code, or each cached entry's expiry and scopes without its token, once each time
+they change.
+
 The session-record sweep is on no timer at all. A record is read when a Claude
 starts and at no other moment — it builds its sidebar as it comes up — so the
 pass that matters is the one a shortcut runs on its way to opening one, in
