@@ -257,6 +257,16 @@ every older entry already carries a signature, so asking the whole feed passed
 for a release signed with the wrong key, which is the one mistake a new key
 makes likely.
 
+The first two runs on this fork never started. Each waited fifteen minutes for a
+`macos-latest` machine and was withdrawn with "The job was not acquired by
+Runner of type hosted even after multiple attempts", beside notices that macOS
+arm64 runners were short of capacity, so nothing was tagged, released or written
+to the feed. The run therefore asks which machine to use, and `macos-15-intel`
+is the way round a shortage: every slice is cross-compiled whichever
+architecture the machine has, so the release is universal either way. Which
+Xcode and SDK compiled it is printed first, since the two images carry different
+ones.
+
 ## Signing
 
 Sparkle ships its framework already ad-hoc signed, and its validator accepts an
