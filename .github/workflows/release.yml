@@ -1,0 +1,113 @@
+# Builds a release from main and publishes it: the disk image and the zip on a
+# GitHub release, and the appcast entry that tells every installed copy about
+# it. Run by hand from the Actions tab after VERSION has been bumped, because a
+# release is a decision rather than something a push should make on its own.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  # The tag, the release and the appcast commit.
+  contents: write
+  # Asking Pages to rebuild, since a push does not reliably queue one.
+  pages: write
+
+# Two releases at once would both read the same appcast and each add one entry
+# to it, and whichever pushed second would drop the other's.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      # A clone the runner cannot authenticate fails rather than waiting on a
+      # prompt nobody will answer. release.sh tries the Homebrew tap this way.
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      # Pages serves the appcast from main, so a release cut from anywhere else
+      # would publish a feed that names a build main has never seen.
+      - name: Only from main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Run this from main, not ${GITHUB_REF#refs/heads/}."
+            exit 1
+          fi
+
+      # Every tag, because release.sh refuses a version whose tag exists and can
+      # only know that if the tags are here.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore vendored Sparkle
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: sparkle-${{ hashFiles('Tools/fetch-sparkle.sh') }}
+
+      # The private half of the key whose public half is SUPublicEDKey. Without
+      # it generate_appcast has nothing to sign with, and an entry it cannot
+      # sign is one every installed copy refuses.
+      - name: Test, build, sign and package
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::The SPARKLE_PRIVATE_KEY secret is not set."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/sparkle-ed25519.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$key"
+          GRAFT_ED_KEY_FILE="$key" ./release.sh
+
+      # Kept with the run as well, so a build can be fetched and tried even if
+      # publishing it fails below.
+      - name: Keep the disk image and the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-graft
+          path: |
+            dist/*.dmg
+            dist/sparkle/*.zip
+
+      # Commits and the tag are made in the name of whoever pressed Run, which
+      # is who decided to release.
+      - name: Sign commits as the person releasing
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+
+      # The release goes up before the feed that points at it. The other way
+      # round, a copy checking in between would be offered a download that is
+      # not there yet.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="v$version"
+          git tag -a "$tag" -m "Claude Graft $version"
+          git push origin "$tag"
+          notes="docs/release-notes/$version.html"
+          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          gh release create "$tag" \
+            "dist/ClaudeGraft-$version.dmg" \
+            "dist/sparkle/ClaudeGraft-$version.zip" \
+            --title "Claude Graft $version" "$@"
+
+      - name: Publish the feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          git add docs/appcast.xml
+          git commit -m "Release $version"
+          git push origin HEAD:main
+          # A push has been seen not to queue a Pages build at all, and a feed
+          # still serving the old file offers nobody the update.
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" >/dev/null \
+            || echo "::warning::Pages did not take the rebuild request; check that the feed names $version."

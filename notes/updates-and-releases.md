@@ -225,10 +225,34 @@ losing one satisfies perfectly.
 
 **The feed URL is unchangeable once shipped.** A copy out in the world polls the
 URL it was born with, and GitHub gives Pages no redirect if the account is ever
-renamed — repositories redirect, Pages does not. `Resources/Info.plist` and the
-`--download-url-prefix` in `release.sh` both name the account, and the suite
-checks they agree, because a rename that touched one would leave the feed
-advertising downloads nobody can fetch.
+renamed — repositories redirect, Pages does not. `release.sh` reads the account
+and the repository out of `SUFeedURL` rather than naming them a second time, and
+the suite checks that it does, because two spellings that drifted apart would
+leave the feed advertising downloads nobody can fetch.
+
+**A fork publishes from its own feed, and the first copy gets there by hand.**
+This fork moved `SUFeedURL` to `nikitaus.github.io/claude-graft` and signs with
+a key of its own, because the original project's feed carries no fix the fork
+has and its key is not the fork's to sign with: a fork left on that feed is
+replaced, silently and within the hour, by the next release there, fix or no
+fix. The site, the source and the tip jar still point at the original project,
+which is whose they are, so the suite ties only the feed and `release.sh`
+together. A copy born polling the old feed never sees the new one, so the first
+release from here is installed from its disk image and every one after arrives
+by itself. Its number is `1.1.8.1` rather than anything the original project
+could ship: two builds under one number are a thing no feed can tell apart, and
+a shortcut refreshes its launcher only when the number changes. `docs/CNAME` is
+gone for the same reason the feed moved — it named the original author's domain,
+which Pages would otherwise try to serve this fork from.
+
+The release itself runs in CI from `.github/workflows/release.yml`, started by
+hand from main once `VERSION` has been bumped. It hands `release.sh` the
+`SPARKLE_PRIVATE_KEY` secret as a file through `GRAFT_ED_KEY_FILE`, since a
+runner has no keychain to read it from, then puts the release up before the
+appcast commit that points at it. The signature check asks the new entry alone:
+every older entry already carries a signature, so asking the whole feed passed
+for a release signed with the wrong key, which is the one mistake a new key
+makes likely.
 
 ## Signing
 

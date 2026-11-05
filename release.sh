@@ -15,6 +15,19 @@ APP="$ROOT/build.noindex/Claude Graft.app"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 TAG="v$VERSION"
 
+# Whose releases these are, read out of the feed every build is born polling
+# rather than spelled a second time here. A fork changes that one line and
+# publishes where its own copies will look; spelled twice, the two could name
+# different accounts and the feed would advertise downloads nobody can reach.
+FEED="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$ROOT/Resources/Info.plist")"
+PAGES='^https://\([^./]*\)\.github\.io/\([^/]*\)/appcast\.xml$'
+OWNER="$(printf '%s' "$FEED" | sed -n "s|$PAGES|\1|p")"
+REPO="$(printf '%s' "$FEED" | sed -n "s|$PAGES|\2|p")"
+if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
+    echo "SUFeedURL is not an appcast on GitHub Pages: $FEED" >&2
+    exit 1
+fi
+
 # The first version whose upgrade has to be agreed to rather than installed
 # while nobody is looking, because it rearranges chats on disk in a way that
 # cannot be undone. Sparkle prompts anyone below this and updates anyone at or
@@ -148,15 +161,24 @@ if [ -f "$ROOT/docs/appcast.xml" ]; then
     ASKED_BEFORE="$(grep -c "sparkle:minimumAutoupdateVersion" "$ROOT/docs/appcast.xml" || true)"
 fi
 
+# The key is read from this machine's keychain unless a file is named. A CI
+# runner has no keychain holding it, so the workflow writes the secret to a
+# file for the length of the run and points here. Written this way because the
+# bash macOS ships treats an empty array under set -u as unbound.
+KEY_ARGS=()
+if [ -n "${GRAFT_ED_KEY_FILE:-}" ]; then
+    KEY_ARGS=(--ed-key-file "$GRAFT_ED_KEY_FILE")
+fi
+
 # --maximum-versions 0 keeps every entry. The default prunes to a handful per
 # branch point, which quietly dropped the oldest release on each run — 1.0.0 and
 # 1.0.1 had already gone this way before anyone noticed, and they were recovered
 # out of git history rather than regenerated, since the signature in an entry is
 # over an archive that is not built again.
-"$ROOT/vendor/bin/generate_appcast" \
+"$ROOT/vendor/bin/generate_appcast" ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} \
     --maximum-versions 0 \
-    --download-url-prefix "https://github.com/aaditya-v-more/claude-graft/releases/download/$TAG/" \
-    --link "https://github.com/aaditya-v-more/claude-graft" \
+    --download-url-prefix "https://github.com/$OWNER/$REPO/releases/download/$TAG/" \
+    --link "https://github.com/$OWNER/$REPO" \
     -o "$ROOT/docs/appcast.xml" \
     "$DIST/sparkle"
 
@@ -190,8 +212,11 @@ ASKED_AFTER="$(grep -c "sparkle:minimumAutoupdateVersion" "$ROOT/docs/appcast.xm
 
 # generate_appcast drops the signature silently when the key it finds does not
 # match SUPublicEDKey, and an unsigned enclosure is one every client refuses.
-# Better to hear about it here than from a user who cannot update.
-grep -q "sparkle:edSignature" "$ROOT/docs/appcast.xml" \
+# Better to hear about it here than from a user who cannot update. Asked of the
+# new entry alone: every older one already carries a signature, so asking the
+# whole feed passed for a release signed with the wrong key, which is the one
+# mistake a new key makes likely.
+grep -F "ClaudeGraft-$VERSION.zip" "$ROOT/docs/appcast.xml" | grep -q "sparkle:edSignature" \
     || { echo "the new appcast entry carries no EdDSA signature." >&2; exit 1; }
 grep -q "ClaudeGraft-$VERSION.zip" "$ROOT/docs/appcast.xml" \
     || { echo "the appcast does not mention $VERSION." >&2; exit 1; }
@@ -203,7 +228,7 @@ echo "appcast has a signed entry for $VERSION"
 # at 1.0.6 while the feed served 1.0.10. Prepared here, with the checksum taken
 # from the disk image this run actually built, so publishing it is a push
 # rather than an edit made by hand against a number read off a screen.
-TAP_REPO="https://github.com/aaditya-v-more/homebrew-claude-graft.git"
+TAP_REPO="https://github.com/$OWNER/homebrew-claude-graft.git"
 TAP="$DIST/homebrew-claude-graft"
 CASK="$TAP/Casks/claude-graft.rb"
 DMG_SHA="$(shasum -a 256 "$DMG" | awk '{print $1}')"
@@ -252,11 +277,11 @@ Then check the feed actually rebuilt. A push does not reliably queue a Pages
 build — one has already errored here, and another never started — and a feed
 still serving the old file means nobody is offered the update:
 
-  curl -s https://aaditya-v-more.github.io/claude-graft/appcast.xml | grep shortVersionString
+  curl -s $FEED | grep shortVersionString
 
 If it does not name this version, ask for a build and wait for it:
 
-  gh api -X POST repos/aaditya-v-more/claude-graft/pages/builds
+  gh api -X POST repos/$OWNER/$REPO/pages/builds
 
 To notarise first (needs a Developer ID and an app-specific password):
   xcrun notarytool submit "$ZIP" --apple-id <you> --team-id <team> \\

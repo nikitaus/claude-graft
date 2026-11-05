@@ -1402,14 +1402,21 @@ do {
     check(plist.contains("<key>SUPublicEDKey</key>") && !plist.contains("<key>SUPublicEDKey</key><string></string>"),
           "and an update is refused unless it is signed by the key shipped alongside it")
 
-    // Two places name the account, and a rename that touched only one would
-    // leave the feed advertising downloads nobody can reach.
+    // The feed names the account a build updates from, and the release reads
+    // it from there rather than spelling it again. Spelled twice, a fork that
+    // changed one of them would advertise downloads nobody can reach.
     let release = read("release.sh")
+    check(release.contains("Print :SUFeedURL"),
+          "the release takes its account from the feed rather than naming one of its own")
+    check(release.contains("github.com/$OWNER/$REPO/releases/download/"),
+          "so a download the feed advertises is published beside it")
+    check(plist.range(of: #"<key>SUFeedURL</key><string>https://[^./]+\.github\.io/[^/]+/appcast\.xml</string>"#,
+                      options: .regularExpression) != nil,
+          "and the feed is a Pages appcast the release knows how to read an account out of")
+
+    // Whose project this is, which a fork keeps pointing at: the site, the
+    // source and the tip jar are the author's whoever publishes the updates.
     let owner = "aaditya-v-more"
-    check(plist.contains("https://\(owner).github.io/"),
-          "the feed and the release assets agree on whose account they are")
-    check(release.contains("github.com/\(owner)/claude-graft/releases/download/"),
-          "so a download the feed advertises resolves to something")
 
     // Fetched over the wire, then trusted to verify every future update.
     let fetch = read("Tools/fetch-sparkle.sh")
@@ -1476,7 +1483,7 @@ do {
     let site = read("docs/index.html")
     let readme = read("README.md")
     check(links.contains("static let owner = \"\(owner)\""),
-          "the app sends people to the same account the feed does")
+          "the app sends people to the project's own account")
     check(site.contains("github.com/\(owner)/claude-graft"),
           "and so does the site")
 
