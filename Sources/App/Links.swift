@@ -13,7 +13,7 @@ import SwiftUI
 /// differently. GitHub Sponsors cannot pay into an Indian account, so the money
 /// goes through Ko-fi, whose handle carries no hyphens — nothing may derive one
 /// name from the other. The suite reads both spellings out of this file and
-/// checks the site, the README and `.github/FUNDING.yml` against them.
+/// checks `.github/FUNDING.yml` against them.
 enum Links {
     static let owner = "aaditya-v-more"
     static let kofiAccount = "aadityavmore"

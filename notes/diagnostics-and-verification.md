@@ -111,6 +111,14 @@ leading with the open account's week. The answer itself was seen first, asked
 for with the command line's login, and the suite reads a copy of it through
 JSONSerialization the way the request does.
 
+The first release from this fork, 1.1.8.1, went through the workflow end to end
+on a `macos-15-intel` machine in eight minutes: the suite, the universal build
+with both slices checked, the disk image and the zip on a GitHub release, and a
+signed appcast entry under this fork's key committed to main, the feed going
+from 19 entries to 20. It was installed by hand, as a first copy from a new feed
+has to be. An update arriving from that feed by itself is the half not yet seen,
+and the next release is what will show it.
+
 Unproven: **Start Session** has never successfully opened a window. It POSTs one
 Haiku message with `max_tokens: 4` and Claude Code's system prompt, which these
 tokens are minted for. If that turns out to be wrong the API's own error message
