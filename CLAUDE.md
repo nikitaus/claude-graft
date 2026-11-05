@@ -56,6 +56,18 @@ opens and quits none.
     ./test.sh                  833 checks, all in a throwaway directory
     ./release.sh [--install]   tests, builds universal, draws the icon, signs, packages
 
+**A machine with only the Command Line Tools cannot build against the macOS 27
+SDK.** That SDK declares `@State` as a macro implemented in `SwiftUIMacros`, and
+the tools carry no implementation for it: with Swift 6.4.2 and nothing but
+`/Library/Developer/CommandLineTools`, every view holding state failed with
+"plugin for module 'SwiftUIMacros' not found", followed by a "'self' is
+immutable" for each assignment to one. `./test.sh` passes on the same machine,
+because the suite compiles no views, so a green suite says nothing about
+whether the app builds. Nothing here needs an API newer than macOS 13, and
+building against the older SDK the tools ship beside it works:
+
+    SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
+
 ## Invariants
 
 **Never touch an app Graft did not create.** Bundles are identified by the
