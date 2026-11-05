@@ -20,11 +20,11 @@ TAG="v$VERSION"
 # publishes where its own copies will look; spelled twice, the two could name
 # different accounts and the feed would advertise downloads nobody can reach.
 FEED="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$ROOT/Resources/Info.plist")"
-PAGES='^https://\([^./]*\)\.github\.io/\([^/]*\)/appcast\.xml$'
-OWNER="$(printf '%s' "$FEED" | sed -n "s|$PAGES|\1|p")"
-REPO="$(printf '%s' "$FEED" | sed -n "s|$PAGES|\2|p")"
+RAW='^https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/main/docs/appcast\.xml$'
+OWNER="$(printf '%s' "$FEED" | sed -n "s|$RAW|\1|p")"
+REPO="$(printf '%s' "$FEED" | sed -n "s|$RAW|\2|p")"
 if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
-    echo "SUFeedURL is not an appcast on GitHub Pages: $FEED" >&2
+    echo "SUFeedURL is not docs/appcast.xml on main: $FEED" >&2
     exit 1
 fi
 
@@ -143,9 +143,9 @@ fi
 hdiutil detach "$MOUNT" -quiet
 echo "packaged $DMG"
 
-# The appcast is a file in docs/, which Pages serves straight off main. No
-# branch to juggle, no CI secret: the signing key stays in this machine's
-# keychain and generate_appcast reads it from there.
+# The appcast is a file in docs/, and every installed copy reads it straight
+# off main, so committing it is publishing it. No branch to juggle and no site
+# to rebuild.
 echo "updating the appcast"
 mkdir -p "$ROOT/docs"
 
@@ -273,15 +273,11 @@ for the URL inside it to resolve. Do both before telling anyone. The cask push
 is the third: it is a separate repository, it is what \`brew install\` reads, and
 it is the one that was forgotten for four releases running.
 
-Then check the feed actually rebuilt. A push does not reliably queue a Pages
-build — one has already errored here, and another never started — and a feed
-still serving the old file means nobody is offered the update:
+Then check the feed names it. GitHub caches raw files for a few minutes, so a
+copy checking straight after the push can still be told about the version
+before:
 
   curl -s $FEED | grep shortVersionString
-
-If it does not name this version, ask for a build and wait for it:
-
-  gh api -X POST repos/$OWNER/$REPO/pages/builds
 
 To notarise first (needs a Developer ID and an app-specific password):
   xcrun notarytool submit "$ZIP" --apple-id <you> --team-id <team> \\

@@ -39,7 +39,8 @@ feed and accept only releases signed with this fork's key, so a release of the
 original project never replaces them. Version numbers have four parts, starting
 at 1.1.8.1, so that none can be confused with an original release; that matters
 because a shortcut refreshes its launcher only when the number changes. The
-repository's Pages site serves the update feed and nothing else.
+feed is the appcast file on `main`, read straight from the repository, so the
+fork keeps no website.
 
 ## Install
 

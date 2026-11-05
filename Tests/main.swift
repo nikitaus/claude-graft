@@ -1410,9 +1410,9 @@ do {
           "the release takes its account from the feed rather than naming one of its own")
     check(release.contains("github.com/$OWNER/$REPO/releases/download/"),
           "so a download the feed advertises is published beside it")
-    check(plist.range(of: #"<key>SUFeedURL</key><string>https://[^./]+\.github\.io/[^/]+/appcast\.xml</string>"#,
+    check(plist.range(of: #"<key>SUFeedURL</key><string>https://raw\.githubusercontent\.com/[^/]+/[^/]+/main/docs/appcast\.xml</string>"#,
                       options: .regularExpression) != nil,
-          "and the feed is a Pages appcast the release knows how to read an account out of")
+          "and the feed is the appcast on main, which the release knows how to read an account out of")
 
     // Whose project this is, which a fork keeps pointing at: the site, the
     // source and the tip jar are the author's whoever publishes the updates.
@@ -1485,21 +1485,20 @@ do {
           "the app sends people to the project's own account")
 
     // The original project's site is its author's page about the product, and
-    // served from this fork's Pages it read as this fork passing itself off as
-    // that product. Pages here carries the update feed and nothing else.
+    // published from this fork it read as this fork passing itself off as that
+    // product. The fork keeps no site, and the feed needs none.
     check(!FileManager.default.fileExists(atPath: repo.appending(path: "docs/index.html").path),
-          "this fork's Pages serves the update feed rather than a copy of the original site")
+          "this fork carries no copy of the original site")
 
     // The tip jar is a second account under a second spelling. GitHub Sponsors
     // cannot pay into an Indian account, so the money goes through Ko-fi, whose
     // handle carries no hyphens — neither name can be built out of the other,
-    // which is why every place is read rather than derived from one. This
-    // fork's README describes only what the fork changes, so it carries none.
+    // which is why it is read rather than derived from the other. This fork's
+    // README describes only what the fork changes and its repository offers no
+    // sponsor button, so the app's menu is the one place left that names it.
     let kofi = "aadityavmore"
     check(links.contains("static let kofiAccount = \"\(kofi)\"") && links.contains("https://ko-fi.com/"),
           "the app's support link goes to the tip jar")
-    check(read(".github/FUNDING.yml").contains("ko_fi: \(kofi)"),
-          "and so does the button at the top of the repository")
 
     // A sponsor page nobody can pay into is worse than no link at all: it reads
     // as an oversight rather than a decision, and it takes a press to find out
