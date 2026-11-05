@@ -261,11 +261,13 @@ struct UsageRow: View {
             }
 
             if let usage = entry.usage {
-                UsageBar(label: "5 hours",
-                         percent: usage.fiveHour,
-                         resets: usage.fiveHourReset,
-                         dimmed: entry.isDimmed)
-                    .identified("five-hour")
+                if let fiveHour = usage.fiveHour {
+                    UsageBar(label: "5 hours",
+                             percent: fiveHour,
+                             resets: usage.fiveHourReset,
+                             dimmed: entry.isDimmed)
+                        .identified("five-hour")
+                }
                 UsageBar(label: "Week",
                          percent: usage.week,
                          resets: usage.weekReset,

@@ -266,6 +266,7 @@ enum ClaudeCredentials {
         // The cache holds one entry per client, organization and scope set. The
         // key carries the scopes; the entry carries the token itself.
         var best: Token?
+        var seen: [Token] = []
         for (composite, value) in cache {
             guard let entry = value as? [String: Any],
                   let token = entry["token"] as? String,
@@ -275,11 +276,42 @@ enum ClaudeCredentials {
                                   expires: Date(timeIntervalSince1970: expires / 1000),
                                   plan: entry["subscriptionType"] as? String,
                                   scopes: Self.scopes(in: composite))
+            seen.append(candidate)
             guard candidate.isCurrent, candidate.covers(scopes) else { continue }
             if best == nil || candidate.expires > best!.expires { best = candidate }
         }
-        guard let best else { throw Failure.expired }
+        guard let best else {
+            noteUnusable(profile, seen: seen, required: scopes)
+            throw Failure.expired
+        }
         return best
+    }
+
+    private static var lastUnusable: [String: String] = [:]
+    private static let unusableLock = NSLock()
+
+    /// A login that has run out and one that never covered the scope usage
+    /// needs both arrive here, and they want different fixes: one is cured by
+    /// that Claude renewing its token, the other by nothing it will ever do.
+    /// The row can only say one sentence, so the log says which, by expiry
+    /// and scope and never by token, once each time the picture changes.
+    private static func noteUnusable(_ profile: URL, seen: [Token], required: [String]) {
+        let entries = seen.sorted { $0.expires < $1.expires }
+        let fingerprint = entries
+            .map { "\($0.expires.timeIntervalSince1970) \($0.isCurrent) \($0.scopes)" }
+            .joined(separator: ",")
+        unusableLock.lock()
+        let changed = lastUnusable[profile.path] != fingerprint
+        lastUnusable[profile.path] = fingerprint
+        unusableLock.unlock()
+        guard changed else { return }
+        Diagnostics.note("usage-login-unusable", [
+            "profile": profile.lastPathComponent,
+            "required": required,
+            "entries": entries.map { entry -> [String: Any] in
+                ["expires": entry.expires, "current": entry.isCurrent, "scopes": entry.scopes]
+            },
+        ])
     }
 
     /// Scopes are appended to the cache key after the api host.

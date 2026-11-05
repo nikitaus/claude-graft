@@ -587,9 +587,11 @@ struct UsageSummary: View {
 
     var body: some View {
         if let usage = entry?.usage {
-            UsageBar(label: "5 hours", percent: usage.fiveHour,
-                     resets: usage.fiveHourReset, dimmed: dimmed)
-                .identified("five-hour")
+            if let fiveHour = usage.fiveHour {
+                UsageBar(label: "5 hours", percent: fiveHour,
+                         resets: usage.fiveHourReset, dimmed: dimmed)
+                    .identified("five-hour")
+            }
             UsageBar(label: "Week", percent: usage.week,
                      resets: usage.weekReset, dimmed: dimmed)
                 .identified("week")

@@ -67,10 +67,39 @@ token and `anthropic-beta: oauth-2025-04-20`. It answers with `five_hour` and
 `subscription_type`, a `limits` array of `weekly_scoped` per-model windows, and
 `extra_usage` credits. The last two are parsed but not shown anywhere yet.
 
+**A plan need not have a five-hour window at all.** Ultra is spent against the
+week alone, with Fable allowed a share of it, and Claude's own usage page shows
+those two rows and nothing else. The parser required `five_hour` and refused
+every answer that lacked it, so on the machine this was reported from both
+accounts read "the usage service sent something unexpected" and showed figures a
+month old as though they were the account's. The answer, asked for with the
+command line's login on that machine, sends `"five_hour":null` and a `seven_day`
+carrying `utilization` and a `resets_at` written to the microsecond, beside
+`limit_dollars`, `used_dollars`, `remaining_dollars` and `locked_reason`, all
+null. Two dozen other top-level keys came back null too, most of them under code
+names. `limits` holds the same week again as
+`{"kind":"weekly_all","group":"weekly","percent":…,"severity":…,"scope":null,"is_active":true}`,
+ahead of the scoped entries. So either window is enough, `fiveHour` is nil
+rather than zero, no five-hour bar is drawn, and the menu bar leads with the
+week; a `seven_day` that stops being sent falls back to `weekly_all`. An answer
+that still cannot be read is written to `diagnostics.log` as `usage-unreadable`,
+by its keys and the kind of value under each, so the next change to the shape
+names itself.
+
 `plan-usage-history.json` is the fallback: samples of `{t, org, u:{fh, sd}}`
 where `fh` is the five-hour percentage used and `sd` the seven-day one, written
 only while that instance runs. It is ~180KB and grows, so it is parsed once per
 change and cached against modification time and size.
+
+A sample needs `sd` and nothing else, for the same reason. On that same machine
+a Claude that was open, green dot and all, reported a sample four days old,
+which is what requiring both figures does to a profile whose samples stopped
+carrying `fh` when the plan changed — whether that is what it writes now was not
+seen, and nothing else about the history needs it to be. A sample that leaves
+`fh` out keeps the figure from the one before it, but only from within five
+hours, or a plan that lost the window would go on showing its last figure for
+ever. Either figure may carry a fraction; `Graft.percentage` reads both shapes
+for both sources.
 
 Claude Code's command line keeps **one** login for the whole machine in the
 keychain, so `CLAUDE_CONFIG_DIR` does not isolate accounts. That is why Start
@@ -127,3 +156,16 @@ because a failing endpoint would then be asked again on every open. Failures
 back off 60/120/300/900/1800 seconds and a success clears the count; a
 `Retry-After` from the service wins and is the one wait a person pressing
 refresh cannot skip.
+
+A login that fails before anything is sent is the exception, and it is also the
+one the row has to name. Every failure but a shut keychain used to read
+"Anthropic's usage service did not answer", including a cached token that had
+run out or never covered `user:profile` — no request made at all — and both
+accounts on the machine this was reported from showed that line with nothing in
+`usage-status.json` to say more. `failureNote` says what happened in the words
+`ClaudeCredentials.Failure` and `UsageAPI.Failure` already had for it,
+`backsOff` lets a login that failed locally be read again on the next pass
+rather than minutes later, since there was nothing to be patient with, and
+`usage-failed` and `usage-login-unusable` in `diagnostics.log` carry the status
+code, or each cached entry's expiry and scopes without its token, once each time
+they change.

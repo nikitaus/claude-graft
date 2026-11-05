@@ -237,10 +237,10 @@ final class UsageMonitor: ObservableObject {
         let usable = entries.filter { $0.currentUsage != nil }
         let running = usable.filter(\.isRunning)
         let pool = running.isEmpty ? usable : running
-        return pool.max { ($0.usage?.fiveHour ?? 0) < ($1.usage?.fiveHour ?? 0) }
+        return pool.max { ($0.usage?.headline ?? 0) < ($1.usage?.headline ?? 0) }
     }
 
-    var headline: Int? { headlineEntry?.usage?.fiveHour }
+    var headline: Int? { headlineEntry?.usage?.headline }
 
     /// The account the menu bar is about, and whether it is named there.
     ///
@@ -434,7 +434,7 @@ final class UsageMonitor: ObservableObject {
             if let refreshed = entry.refreshed { row["refreshedAt"] = stamp.string(from: refreshed) }
             if let note = entry.note { row["note"] = note }
             if let usage = entry.usage {
-                row["fiveHour"] = usage.fiveHour
+                if let fiveHour = usage.fiveHour { row["fiveHour"] = fiveHour }
                 row["week"] = usage.week
                 if let reset = usage.fiveHourReset { row["fiveHourReset"] = stamp.string(from: reset) }
                 if let reset = usage.weekReset { row["weekReset"] = stamp.string(from: reset) }
@@ -518,17 +518,25 @@ final class UsageMonitor: ObservableObject {
             // line. The row itself always says, quietly. The keychain being
             // shut is worth surfacing either way, since it is one click to fix
             // and everything live depends on it.
-            let why: String
             switch error {
             case ClaudeCredentials.Failure.noKeychainAccess,
                  ClaudeCredentials.Failure.keychainDeclined:
                 locked = true
-                why = L10n.text("Live usage needs keychain access.")
             default:
-                why = L10n.text("Anthropic's usage service did not answer.")
+                break
+            }
+            let why = Self.failureNote(for: error)
+            // Once per change rather than once per pass: a login that has run
+            // out fails on every tick, and the log is for the moment it began.
+            if lastFailure[profile.path] != why {
+                Diagnostics.note("usage-failed", ["profile": profile.lastPathComponent,
+                                                  "reason": Self.reasonCode(error)])
             }
             lastFailure[profile.path] = why
             if interactive { problem = (error as? LocalizedError)?.errorDescription }
+            guard Self.backsOff(after: error) else {
+                return LiveOutcome(reading: cached?.reading, fetched: cached?.fetched, failure: why)
+            }
 
             var retryAfter: TimeInterval?
             if case UsageAPI.Failure.http(_, let asked) = error, let asked {
@@ -539,6 +547,58 @@ final class UsageMonitor: ObservableObject {
             let delay = Self.retryDelay(afterFailures: failures, retryAfter: retryAfter)
             backoff[profile.path] = (Date().addingTimeInterval(delay), failures)
             return LiveOutcome(reading: cached?.reading, fetched: cached?.fetched, failure: why)
+        }
+    }
+
+    /// What the row says when its figure could not be had live.
+    ///
+    /// Every failure but a shut keychain used to read "did not answer",
+    /// including the ones where nothing was sent at all — a login that had run
+    /// out, or one without the scope usage needs. Both accounts on the machine
+    /// this was reported from said it, so the one sentence that pointed at the
+    /// fix, whether to open the profile or to wait out a rate limit, was the
+    /// one thing the row left out.
+    static func failureNote(for error: Error) -> String {
+        let fallback = L10n.text("Anthropic's usage service did not answer.")
+        switch error {
+        case ClaudeCredentials.Failure.noKeychainAccess,
+             ClaudeCredentials.Failure.keychainDeclined:
+            return L10n.text("Live usage needs keychain access.")
+        case let failure as ClaudeCredentials.Failure:
+            return failure.errorDescription ?? fallback
+        case let failure as UsageAPI.Failure:
+            return failure.errorDescription ?? fallback
+        default:
+            return fallback
+        }
+    }
+
+    /// A failure that happened before anything was sent has nothing to be
+    /// patient with. The next pass reads the profile's login again for the
+    /// cost of a file and finds the renewed one the moment Claude writes it;
+    /// waiting minutes first only put that off.
+    static func backsOff(after error: Error) -> Bool {
+        switch error {
+        case ClaudeCredentials.Failure.expired, ClaudeCredentials.Failure.notSignedIn:
+            return false
+        default:
+            return true
+        }
+    }
+
+    /// The failure as the log records it: short enough to grep for, and
+    /// specific enough to tell a refused login from a rate limit.
+    static func reasonCode(_ error: Error) -> String {
+        switch error {
+        case UsageAPI.Failure.http(let code, let retryAfter):
+            return retryAfter.map { "http \(code), retry after \(Int($0))s" } ?? "http \(code)"
+        case UsageAPI.Failure.unreadable:
+            return "unreadable"
+        case let failure as ClaudeCredentials.Failure:
+            return "login \(failure)"
+        default:
+            let underlying = error as NSError
+            return "\(underlying.domain) \(underlying.code)"
         }
     }
 

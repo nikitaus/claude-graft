@@ -103,6 +103,14 @@ old refreshed it within the second, so the refresh moved with the lookup. Two
 Claudes swapping places in front is the one case not yet seen, since Claude 2
 stayed closed.
 
+Two Ultra accounts have been watched reading live in the dropdown, on a machine
+where both had shown "the usage service sent something unexpected": Week and
+Fable under each, each with the reset Claude's own usage page names for that
+account, no five-hour bar, "Updated just now from Anthropic", and the menu bar
+leading with the open account's week. The answer itself was seen first, asked
+for with the command line's login, and the suite reads a copy of it through
+JSONSerialization the way the request does.
+
 Unproven: **Start Session** has never successfully opened a window. It POSTs one
 Haiku message with `max_tokens: 4` and Claude Code's system prompt, which these
 tokens are minted for. If that turns out to be wrong the API's own error message

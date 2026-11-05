@@ -94,8 +94,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         item = nil
     }
 
-    /// The five-hour figure for whichever Claude is open, with the rest behind
-    /// the tooltip. With the Claude in front shown, the figure is that one's.
+    /// The five-hour figure for whichever Claude is open — the week, on a plan
+    /// that has no five-hour window — with the rest behind the tooltip. With
+    /// the Claude in front shown, the figure is that one's.
     private func updateTitle() {
         guard let button = item?.button else { return }
         let updates = Shared.claudeUpdates
@@ -126,7 +127,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         // Built the same way with or without a Claude in front, so the figure
         // is lowered in both and does not jump as one comes forward.
         if front != nil || figures != nil {
-            button.attributedTitle = FrontTitle.make(icon: icon, tag: tag, figure: figures?.fiveHour,
+            button.attributedTitle = FrontTitle.make(icon: icon, tag: tag, figure: figures?.headline,
                                                      font: button.font ?? NSFont.menuBarFont(ofSize: 0))
         } else {
             button.title = ""
@@ -135,7 +136,10 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         // whose figure it is, which on screen only the icon says, and the
         // update the symbol stands for, which only the symbol does.
         let spoken = headline.flatMap { entry in
-            figures.map { L10n.format("%@, %ld%% of 5 hours", entry.name, $0.fiveHour) }
+            figures.map { reading in
+                reading.fiveHour.map { L10n.format("%@, %ld%% of 5 hours", entry.name, $0) }
+                    ?? L10n.format("%@, %ld%% of the week", entry.name, reading.week)
+            }
         } ?? front?.name
         button.setAccessibilityTitle([spoken, updateTip].compactMap { $0 }.joined(separator: ". "))
         guard let headline, let figures else {
@@ -143,16 +147,18 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             return
         }
 
-        var lines = [L10n.format("%@: %ld%% of 5 hours, %ld%% of the week",
-                                 headline.name, figures.fiveHour, figures.week)]
-        if let fable = figures.fable { lines[0] += L10n.format(", %ld%% Fable", fable) }
+        func summary(_ name: String, _ reading: Graft.Usage) -> String {
+            var line = reading.fiveHour.map {
+                L10n.format("%@: %ld%% of 5 hours, %ld%% of the week", name, $0, reading.week)
+            } ?? L10n.format("%@: %ld%% of the week", name, reading.week)
+            if let fable = reading.fable { line += L10n.format(", %ld%% Fable", fable) }
+            return line
+        }
+        var lines = [summary(headline.name, figures)]
         if headline.isRunning { lines[0] += L10n.text(" — open now") }
         for entry in usage.entries where entry.id != headline.id {
             guard let other = entry.usage else { continue }
-            var line = L10n.format("%@: %ld%% of 5 hours, %ld%% of the week",
-                                   entry.name, other.fiveHour, other.week)
-            if let fable = other.fable { line += L10n.format(", %ld%% Fable", fable) }
-            lines.append(line)
+            lines.append(summary(entry.name, other))
         }
         if let updateTip { lines.append(updateTip) }
         button.toolTip = lines.joined(separator: "\n")

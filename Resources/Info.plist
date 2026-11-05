@@ -23,8 +23,8 @@
          with, and GitHub gives Pages no redirect if the account is ever renamed.
          SUPublicEDKey is the public half of the key in the login keychain; an
          update whose signature does not match it is refused. -->
-    <key>SUFeedURL</key><string>https://aaditya-v-more.github.io/claude-graft/appcast.xml</string>
-    <key>SUPublicEDKey</key><string>TncOVOd5VFXtXoAD5/KoGC2ea9ls2tO3amPVx5jtty8=</string>
+    <key>SUFeedURL</key><string>https://nikitaus.github.io/claude-graft/appcast.xml</string>
+    <key>SUPublicEDKey</key><string>uCOOg2NfdabdEW6fo2zZ/AMqJXZOS0/dauW4DN7yxek=</string>
     <key>SUEnableAutomaticChecks</key><true/>
     <!-- Without this, Sparkle allows downloading in the background only while
          its own schedule is on. Holding updates turns the schedule off, so the

@@ -64,6 +64,12 @@ opens and quits none.
     ./test-sidebar.sh              sidebar sync against real Chromium storage; needs Claude and Node
     ./release.sh [--install]       tests, builds universal, draws the icon, signs, packages
 
+With only the Command Line Tools, build against the older SDK they ship, since
+the macOS 27 one needs Xcode's `SwiftUIMacros` and the suite passes without it —
+see [notes/updates-and-releases.md](notes/updates-and-releases.md):
+
+    SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
+
 ## Rules
 
 ### Opening a profile — [notes/opening-profiles.md](notes/opening-profiles.md)
@@ -114,6 +120,8 @@ opens and quits none.
 - **Only a person starts a session.** The suite fails on a fourth caller or one wired to `onAppear`, `onReceive` or a timer.
 - **One account, one figure:** both detail views read `UsageMonitor.entry(for:)`.
 - **Polling:** `mayUseCache` gives five minutes to a tick, two for an open profile, a minute for the dropdown, two seconds for a press; `arrival` queues rather than drops; failures back off and `Retry-After` wins.
+- **A plan need not have a five-hour window.** Ultra has only the week: either window is enough, `fiveHour` is nil rather than zero, and the menu bar leads with the week. A profile's own sample needs only `sd`.
+- **A row says why its figure is not live** in the words of the error behind it (`failureNote`). A login that failed before anything was sent does not back off.
 
 ### Interface — [notes/interface.md](notes/interface.md)
 
@@ -133,6 +141,7 @@ opens and quits none.
 - **Graft's own update installs itself and says nothing,** a press included (`checkForUpdatesInBackground`); a hold is off unless turned on.
 - **`sparkle:minimumAutoupdateVersion` 1.1.0 is a floor** on every entry from 1.1.0 on, and that release needs a note.
 - **The feed keeps every release** (`--maximum-versions 0`), **and its URL never changes.**
+- **The account a build updates from is read out of `SUFeedURL`;** `release.sh` derives owner and repository from it. This fork publishes from its own feed with its own key, and releases run by hand from main in `.github/workflows/release.yml` with the `SPARKLE_PRIVATE_KEY` secret.
 
 ### Sidebar and desktop settings — [notes/sidebar-and-settings.md](notes/sidebar-and-settings.md)
 

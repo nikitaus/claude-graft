@@ -2,6 +2,7 @@
 "%@ are already open on the same Claude Code chats.\n\nBoth instances write to the same chat files. Opening the same conversation in two of them at once can lose messages." = "%@ уже открыты с теми же чатами Claude Code.\n\nНесколько экземпляров записывают данные в одни и те же файлы чатов. Если открыть один диалог сразу в двух экземплярах, часть сообщений может потеряться.";
 "%@ is already open on the same Claude Code chats.\n\nBoth instances write to the same chat files. Opening the same conversation in two of them at once can lose messages." = "%@ уже открыт с теми же чатами Claude Code.\n\nОба экземпляра записывают данные в одни и те же файлы чатов. Если открыть один диалог сразу в двух экземплярах, часть сообщений может потеряться.";
 "%@: %ld%% of 5 hours, %ld%% of the week" = "%@: %ld%% за 5 часов, %ld%% за неделю";
+"%@: %ld%% of the week" = "%@: %ld%% за неделю";
 "%@%" = "%@%";
 "%ldd %ldh %ldm" = "%ld д. %ld ч. %ld мин.";
 "%ldh %ldm" = "%ld ч. %ld мин.";
@@ -253,4 +254,5 @@
 "%1$ld%% used, resets in %2$@" = "Использовано %1$ld%%, сброс через %2$@";
 "Reads chats from %@" = "Источник чатов: %@";
 "%@, %ld%% of 5 hours" = "%@, %ld%% за 5 часов";
+"%@, %ld%% of the week" = "%@, %ld%% за неделю";
 "Claude Graft Menu" = "Меню Claude Graft";
