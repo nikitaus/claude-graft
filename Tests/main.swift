@@ -1783,6 +1783,29 @@ do {
           "the log names the status and the wait the service asked for")
     check(UsageMonitor.reasonCode(ClaudeCredentials.Failure.expired) == "login expired",
           "and tells a login that ran out from anything the service said")
+
+    // The last answer outlives the process. Kept in memory alone, a restart
+    // began with nothing, and an answer refused by the rate limit straight
+    // after it left a row on a record hours older than what it had shown.
+    let kept = UsageMonitor.StoredReading(
+        fetched: Date().addingTimeInterval(-12 * 60),
+        reading: UsageAPI.Reading(fiveHour: nil, week: 15, fiveHourReset: nil,
+                                  weekReset: Date().addingTimeInterval(5 * 86_400),
+                                  plan: "Ultra", fable: 2, fableReset: nil))
+    let written = try! JSONEncoder().encode(["/profile": kept])
+    let back = UsageMonitor.storedReadings(from: written)["/profile"]
+    check(back?.reading == kept.reading,
+          "a reading kept across a restart comes back exactly")
+    check(back.map { abs($0.fetched.timeIntervalSince(kept.fetched)) < 0.001 } == true,
+          "with the moment it was taken rather than the moment it was read back")
+    check(UsageMonitor.storedReadings(from: written)["/profile"]?.reading.fiveHour == nil,
+          "and a plan with no five-hour window does not come back with one")
+    let ancient = UsageMonitor.StoredReading(fetched: Date().addingTimeInterval(-9 * 86_400),
+                                             reading: kept.reading)
+    check(UsageMonitor.storedReadings(from: try! JSONEncoder().encode(["/profile": ancient])).isEmpty,
+          "one older than every window it describes is left behind")
+    check(UsageMonitor.storedReadings(from: Data("not json".utf8)).isEmpty,
+          "and a file that will not read is no cache rather than a failure")
 }
 
 // MARK: - Telling instances apart

@@ -115,6 +115,59 @@ final class UsageMonitor: ObservableObject {
 
     /// The API is polled far less often than the disk, and only per profile.
     private var liveCache: [String: (fetched: Date, reading: UsageAPI.Reading)] = [:]
+    private var liveCacheLoaded = false
+
+    /// Where the last answer for each profile outlives the process.
+    ///
+    /// It was kept in memory alone, so every restart — an update installing
+    /// itself, a login, a relaunch — began with nothing, asked every account
+    /// at once, and an answer refused by the rate limit then left a row on the
+    /// profile's own record. One Ultra account went in ten minutes from a live
+    /// 15% of its week to a nine-hour-old 0%, across what by its timing was an
+    /// update restarting Graft.
+    static var liveFile: URL {
+        Graft.applicationSupport
+            .appending(path: "ClaudeGraft")
+            .appending(path: "live-usage.json")
+    }
+
+    /// A reading as it is kept on disk, with the moment it was really taken,
+    /// so one brought back after a restart is labelled with its true age.
+    struct StoredReading: Codable, Equatable {
+        var fetched: Date
+        var reading: UsageAPI.Reading
+    }
+
+    /// Past a week, every window a reading describes has reset, and bringing
+    /// it back would only put a figure on screen that is known to be wrong.
+    static let storedLifetime: TimeInterval = 8 * 24 * 60 * 60
+
+    /// What the file holds that is still worth having; anything unreadable is
+    /// simply no cache, since the next answer writes the file afresh.
+    static func storedReadings(from data: Data, now: Date = Date()) -> [String: StoredReading] {
+        guard let decoded = try? JSONDecoder().decode([String: StoredReading].self, from: data)
+        else { return [:] }
+        return decoded.filter { now.timeIntervalSince($0.value.fetched) < storedLifetime }
+    }
+
+    /// Runs on `queue`, once, before anything reads or changes the cache, so a
+    /// reading dropped by `invalidate` is never brought back from the file.
+    private func loadLiveCache() {
+        guard !liveCacheLoaded else { return }
+        liveCacheLoaded = true
+        guard let data = try? Data(contentsOf: Self.liveFile) else { return }
+        for (path, stored) in Self.storedReadings(from: data) where liveCache[path] == nil {
+            liveCache[path] = (stored.fetched, stored.reading)
+        }
+    }
+
+    private func saveLiveCache() {
+        let stored = liveCache.mapValues { StoredReading(fetched: $0.fetched, reading: $0.reading) }
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        try? FileManager.default.createDirectory(at: Self.liveFile.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        try? data.write(to: Self.liveFile, options: .atomic)
+    }
     /// What went wrong the last time a profile's figures were asked for, kept
     /// until an answer comes back so every pass in between can say so.
     private var lastFailure: [String: String] = [:]
@@ -348,6 +401,7 @@ final class UsageMonitor: ObservableObject {
         inFlight = true
         queue.async { [weak self] in
             guard let self else { return }
+            self.loadLiveCache()
             var problem: String?
             var locked = false
             let fresh = targets.map { target -> Entry in
@@ -460,7 +514,12 @@ final class UsageMonitor: ObservableObject {
     /// is why pressing Start Session moved nothing on screen. Ordered ahead of
     /// the refresh that follows by the queue both go through.
     func invalidate(_ profile: URL) {
-        queue.async { [weak self] in self?.liveCache[profile.path] = nil }
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.loadLiveCache()
+            self.liveCache[profile.path] = nil
+            self.saveLiveCache()
+        }
     }
 
     /// What asking for one profile's live figures came to: the reading to
@@ -508,6 +567,7 @@ final class UsageMonitor: ObservableObject {
             let reading = try UsageAPI.fetch(token: token.value)
             let fetched = Date()
             liveCache[profile.path] = (fetched, reading)
+            saveLiveCache()
             backoff[profile.path] = nil
             lastFailure[profile.path] = nil
             serverAskedToWait.remove(profile.path)

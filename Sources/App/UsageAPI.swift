@@ -7,7 +7,7 @@ import Foundation
 enum UsageAPI {
     static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
-    struct Reading: Equatable {
+    struct Reading: Equatable, Codable {
         /// Nil when the plan has no five-hour window, as Ultra does not.
         var fiveHour: Int?
         var week: Int
