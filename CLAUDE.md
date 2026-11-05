@@ -141,7 +141,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 - **Graft's own update installs itself and says nothing,** a press included (`checkForUpdatesInBackground`); a hold is off unless turned on.
 - **`sparkle:minimumAutoupdateVersion` 1.1.0 is a floor** on every entry from 1.1.0 on, and that release needs a note.
 - **The feed keeps every release** (`--maximum-versions 0`), **and its URL never changes.**
-- **The account a build updates from is read out of `SUFeedURL`;** `release.sh` derives owner and repository from it. This fork publishes from its own feed with its own key, and releases run by hand from main in `.github/workflows/release.yml` with the `SPARKLE_PRIVATE_KEY` secret.
+- **The account a build updates from is read out of `SUFeedURL`;** `release.sh` derives owner and repository from it. This fork publishes from its own feed with its own key — `docs/appcast.xml` read raw off main, no site — and releases run by hand from main in `.github/workflows/release.yml` with the `SPARKLE_PRIVATE_KEY` secret.
 
 ### Sidebar and desktop settings — [notes/sidebar-and-settings.md](notes/sidebar-and-settings.md)
 

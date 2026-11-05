@@ -18,12 +18,13 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSSupportsAutomaticTermination</key><true/>
-    <!-- Sparkle. The feed is a GitHub Pages path and is baked into every copy
-         ever shipped: a build that is out in the world polls the URL it was born
-         with, and GitHub gives Pages no redirect if the account is ever renamed.
+    <!-- Sparkle. The feed is docs/appcast.xml on main, read straight from the
+         repository so no website has to stay up for it, and it is baked into
+         every copy ever shipped: a build out in the world polls the URL it was
+         born with, and nothing can move it for a copy already installed.
          SUPublicEDKey is the public half of the key in the login keychain; an
          update whose signature does not match it is refused. -->
-    <key>SUFeedURL</key><string>https://nikitaus.github.io/claude-graft/appcast.xml</string>
+    <key>SUFeedURL</key><string>https://raw.githubusercontent.com/nikitaus/claude-graft/main/docs/appcast.xml</string>
     <key>SUPublicEDKey</key><string>uCOOg2NfdabdEW6fo2zZ/AMqJXZOS0/dauW4DN7yxek=</string>
     <key>SUEnableAutomaticChecks</key><true/>
     <!-- Without this, Sparkle allows downloading in the background only while

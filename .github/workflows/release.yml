@@ -22,8 +22,6 @@ on:
 permissions:
   # The tag, the release and the appcast commit.
   contents: write
-  # Asking Pages to rebuild, since a push does not reliably queue one.
-  pages: write
 
 # Two releases at once would both read the same appcast and each add one entry
 # to it, and whichever pushed second would drop the other's.
@@ -39,8 +37,9 @@ jobs:
       # prompt nobody will answer. release.sh tries the Homebrew tap this way.
       GIT_TERMINAL_PROMPT: "0"
     steps:
-      # Pages serves the appcast from main, so a release cut from anywhere else
-      # would publish a feed that names a build main has never seen.
+      # Every installed copy reads the appcast off main, so a release cut from
+      # anywhere else would publish a feed that names a build main has never
+      # seen.
       - name: Only from main
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -118,15 +117,11 @@ jobs:
             "dist/sparkle/ClaudeGraft-$version.zip" \
             --title "Claude Graft $version" "$@"
 
+      # Installed copies read the appcast straight off main, so this push is
+      # the moment the update is offered.
       - name: Publish the feed
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           git add docs/appcast.xml
           git commit -m "Release $version"
           git push origin HEAD:main
-          # A push has been seen not to queue a Pages build at all, and a feed
-          # still serving the old file offers nobody the update.
-          gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" >/dev/null \
-            || echo "::warning::Pages did not take the rebuild request; check that the feed names $version."

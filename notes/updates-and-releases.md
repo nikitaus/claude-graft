@@ -231,25 +231,32 @@ the suite checks that it does, because two spellings that drifted apart would
 leave the feed advertising downloads nobody can fetch.
 
 **A fork publishes from its own feed, and the first copy gets there by hand.**
-This fork moved `SUFeedURL` to `nikitaus.github.io/claude-graft` and signs with
-a key of its own, because the original project's feed carries no fix the fork
-has and its key is not the fork's to sign with: a fork left on that feed is
-replaced, silently and within the hour, by the next release there, fix or no
-fix. The site, the source and the tip jar still point at the original project,
-which is whose they are, so the suite ties only the feed and `release.sh`
-together. A copy born polling the old feed never sees the new one, so the first
-release from here is installed from its disk image and every one after arrives
-by itself. Its number is `1.1.8.1` rather than anything the original project
-could ship: two builds under one number are a thing no feed can tell apart, and
-a shortcut refreshes its launcher only when the number changes. `docs/CNAME` is
-gone because it named the original author's domain, which Pages would otherwise
-try to serve this fork from, and `docs/index.html` is gone because it is the
-original author's page about the product: served from this fork's Pages it read
-as this fork passing itself off as that product. Pages here serves the feed and
-nothing else, and the suite fails if the page comes back. The README says what
-this fork changes and nothing else, with one line naming the original project;
-the original's own description of its product stays the original's, and the
-copyright notice stays in `LICENSE`, as MIT asks.
+This fork signs with a key of its own and reads a feed of its own, because the
+original project's feed carries no fix the fork has and its key is not the
+fork's to sign with: a fork left on that feed is replaced, silently and within
+the hour, by the next release there, fix or no fix. The site, the source and the
+in-app tip jar still point at the original project, which is whose they are, so
+the suite ties only the feed and `release.sh` together. A copy born polling the
+old feed never sees the new one, so the first release from here was installed
+from its disk image and every one after arrives by itself. Its number is
+`1.1.8.1` rather than anything the original project could ship: two builds under
+one number are a thing no feed can tell apart, and a shortcut refreshes its
+launcher only when the number changes.
+
+**The feed is the file on main, with no site in front of it.** 1.1.8.1 shipped
+polling `nikitaus.github.io/claude-graft/appcast.xml`, which needed Pages to
+publish `docs/` and a custom-domain file to be deleted first, since `docs/CNAME`
+named the original author's domain. A site exists here for nothing but the feed,
+and the feed is already a file on main, so from 1.1.8.2 `SUFeedURL` reads it
+from `raw.githubusercontent.com` and committing it is publishing it. GitHub
+caches raw files for a few minutes, which delays an offer and loses nothing. The
+one copy polling the Pages address is why Pages stays published until that copy
+has taken 1.1.8.2, and is unpublished then: switched off first, it would never
+hear of another release. `docs/index.html` is gone too, being the original
+author's page about the product, and the suite fails if it comes back. The
+README says what this fork changes and nothing else, with one line naming the
+original project, the repository offers no sponsor button, and the copyright
+notice stays in `LICENSE`, as MIT asks.
 
 The release itself runs in CI from `.github/workflows/release.yml`, started by
 hand from main once `VERSION` has been bumped. It hands `release.sh` the
