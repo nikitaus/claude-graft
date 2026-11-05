@@ -1,3 +1,10 @@
+> **This is a personal fork** of [Claude Graft](https://github.com/aaditya-v-more/claude-graft)
+> by [Aaditya More](https://github.com/aaditya-v-more), not the original project. It adds live
+> usage for plans without a five-hour window, such as Ultra, and says why when a figure cannot be
+> had live. Its builds update from [this fork's releases](https://github.com/nikitaus/claude-graft/releases),
+> installed by hand the first time from the disk image there. Everything below describes the
+> original project, and the site, Homebrew cask and tip jar it links to are its author's.
+
 <div align="center">
 
 <img src="docs/assets/icon.png" width="120" alt="Claude Graft">
