@@ -89,11 +89,24 @@ enum UsageAPI {
     /// plan without it — Ultra, which is spent against the week alone — had
     /// every answer refused as unexpected, leaving its figures to come off a
     /// record days or weeks old.
+    ///
+    /// The week is also in `limits`, as `weekly_all`, beside two dozen other
+    /// top-level keys that all came back null for that account. Taking it from
+    /// there when `seven_day` is not sent means the next window to go the same
+    /// way as `five_hour` does not refuse the answer a second time.
     static func reading(from body: [String: Any]) -> Reading? {
         let session = window(body["five_hour"])
         let weekly = window(body["seven_day"])
+            ?? limit(body["limits"]) { $0["kind"] as? String == "weekly_all" }
         guard session != nil || weekly != nil else { return nil }
-        let fable = fableWindow(body["limits"])
+        let fable = limit(body["limits"]) {
+            guard $0["kind"] as? String == "weekly_scoped",
+                  let scope = $0["scope"] as? [String: Any],
+                  let model = scope["model"] as? [String: Any],
+                  let name = model["display_name"] as? String
+            else { return false }
+            return name.localizedCaseInsensitiveContains("fable")
+        }
         return Reading(fiveHour: session?.used,
                        week: weekly?.used ?? 0,
                        fiveHourReset: session?.resets,
@@ -126,20 +139,16 @@ enum UsageAPI {
         return (used, date(object["resets_at"]))
     }
 
-    private static func fableWindow(_ value: Any?) -> (used: Int, resets: Date?)? {
+    /// An entry in `limits` writes `percent` where the older windows write
+    /// `utilization`, and has been seen writing the latter too.
+    private static func limit(_ value: Any?,
+                              where matches: ([String: Any]) -> Bool) -> (used: Int, resets: Date?)? {
         guard let limits = value as? [[String: Any]],
-              let limit = limits.first(where: {
-                  guard $0["kind"] as? String == "weekly_scoped",
-                        let scope = $0["scope"] as? [String: Any],
-                        let model = scope["model"] as? [String: Any],
-                        let name = model["display_name"] as? String
-                  else { return false }
-                  return name.localizedCaseInsensitiveContains("fable")
-              }),
-              let used = Graft.percentage(limit["percent"])
-                ?? Graft.percentage(limit["utilization"])
+              let entry = limits.first(where: matches),
+              let used = Graft.percentage(entry["percent"])
+                ?? Graft.percentage(entry["utilization"])
         else { return nil }
-        return (used, date(limit["resets_at"]))
+        return (used, date(entry["resets_at"]))
     }
 
     /// `resets_at` comes back as an ISO timestamp, occasionally as epoch seconds.
@@ -147,7 +156,16 @@ enum UsageAPI {
         if let text = value as? String {
             let withFraction = ISO8601DateFormatter()
             withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            return withFraction.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+            if let parsed = withFraction.date(from: text) ?? ISO8601DateFormatter().date(from: text) {
+                return parsed
+            }
+            // The service writes microseconds — `05:00:00.141309+00:00`. Were
+            // the formatter to refuse six digits, the countdown would vanish
+            // while the figure stayed and nothing would say why, so the
+            // fraction is cut to milliseconds and tried once more.
+            let milliseconds = text.replacingOccurrences(of: #"(\.[0-9]{3})[0-9]+"#, with: "$1",
+                                                         options: .regularExpression)
+            return withFraction.date(from: milliseconds)
         }
         if let seconds = value as? Double { return Date(timeIntervalSince1970: seconds) }
         if let seconds = value as? Int { return Date(timeIntervalSince1970: Double(seconds)) }

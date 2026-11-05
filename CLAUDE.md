@@ -1119,12 +1119,19 @@ week alone, with Fable allowed a share of it, and Claude's own usage page shows
 those two rows and nothing else. The parser required `five_hour` and refused
 every answer that lacked it, so on the machine this was reported from both
 accounts read "the usage service sent something unexpected" and showed figures a
-month old as though they were the account's. Whether that answer sends the
-window as null or leaves it out was not seen, so the two are read the same:
-either window is enough, `fiveHour` is nil rather than zero, no five-hour bar is
-drawn, and the menu bar leads with the week instead. An answer that still cannot
-be read is written to `diagnostics.log` as `usage-unreadable`, by its keys and
-the kind of value under each, so the next change to the shape names itself.
+month old as though they were the account's. The answer, asked for with the
+command line's login on that machine, sends `"five_hour":null` and a `seven_day`
+carrying `utilization` and a `resets_at` written to the microsecond, beside
+`limit_dollars`, `used_dollars`, `remaining_dollars` and `locked_reason`, all
+null. Two dozen other top-level keys came back null too, most of them under code
+names. `limits` holds the same week again as
+`{"kind":"weekly_all","group":"weekly","percent":…,"severity":…,"scope":null,"is_active":true}`,
+ahead of the scoped entries. So either window is enough, `fiveHour` is nil
+rather than zero, no five-hour bar is drawn, and the menu bar leads with the
+week; a `seven_day` that stops being sent falls back to `weekly_all`. An answer
+that still cannot be read is written to `diagnostics.log` as `usage-unreadable`,
+by its keys and the kind of value under each, so the next change to the shape
+names itself.
 
 `plan-usage-history.json` is the fallback: samples of `{t, org, u:{fh, sd}}`
 where `fh` is the five-hour percentage used and `sd` the seven-day one, written
@@ -1355,10 +1362,11 @@ Haiku message with `max_tokens: 4` and Claude Code's system prompt, which these
 tokens are minted for. If that turns out to be wrong the API's own error message
 surfaces in the UI rather than being swallowed — read it rather than guessing.
 
-The week-only answer has not been seen from the endpoint itself, only inferred
-from the refusal and from Claude's own usage page. If an Ultra account still
-reads "something unexpected", the `usage-unreadable` line in `diagnostics.log`
-says what came back.
+The week-only answer has been seen from the endpoint, and the suite reads a copy
+of it through JSONSerialization the way the request does. A build carrying the
+fix has not yet been watched reading it in the dropdown. If an Ultra account
+still reads "something unexpected", the `usage-unreadable` line in
+`diagnostics.log` says what came back.
 
 `~/Library/Application Support/ClaudeGraft/usage-status.json` records what each
 poll found, including whether the figures came from the API. Read it to check

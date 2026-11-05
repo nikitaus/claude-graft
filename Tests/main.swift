@@ -1213,6 +1213,33 @@ do {
     check(UsageAPI.reading(from: ["limits": [Any](), "subscription_type": "max"]) == nil,
           "and so is one carrying everything but the windows")
 
+    // The answer an Ultra account actually got, with most of its null keys
+    // left out and closed where the terminal cut it off. Read through
+    // JSONSerialization, as the request is, so every number arrives the way
+    // the service sends it rather than as a Swift literal.
+    let observed = #"""
+    {"five_hour":null,"seven_day":{"utilization":100.0,"resets_at":"2026-11-10T05:00:00.141309+00:00",
+    "limit_dollars":null,"used_dollars":null,"remaining_dollars":null,"locked_reason":null},
+    "seven_day_oauth_apps":null,"seven_day_opus":null,"seven_day_sonnet":null,"tangelo":null,"pace":null,
+    "extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":0.0,"utilization":null,
+    "currency":"USD","decimal_places":2,"disabled_reason":"out_of_credits"},
+    "limits":[{"kind":"weekly_all","group":"weekly","percent":100,"severity":"critical",
+    "resets_at":"2026-11-10T05:00:00.141309+00:00","scope":null,"is_active":true}]}
+    """#
+    let observedBody = (try? JSONSerialization.jsonObject(with: Data(observed.utf8))) as? [String: Any]
+    let seen = observedBody.flatMap { UsageAPI.reading(from: $0) }
+    check(seen != nil, "the answer an Ultra account really gets is read")
+    check(seen?.week == 100 && seen != nil && seen?.fiveHour == nil,
+          "as its week alone, with the null five-hour window left out")
+    let weekEnds = ISO8601DateFormatter().date(from: "2026-11-10T05:00:00Z")!
+    check(seen?.weekReset.map { abs($0.timeIntervalSince(weekEnds)) < 1 } == true,
+          "a reset written to the microsecond is read to the second")
+
+    var withoutSevenDay = observedBody ?? [:]
+    withoutSevenDay["seven_day"] = NSNull()
+    check(UsageAPI.reading(from: withoutSevenDay)?.week == 100,
+          "the week is taken from the limits list when the older window is not sent")
+
     // What is written down when an answer cannot be read: enough to see which
     // part moved, and none of the figures themselves.
     let described = UsageAPI.shape(of: ultraBody) as? [String: Any]
