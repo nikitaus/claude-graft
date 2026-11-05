@@ -1084,6 +1084,16 @@ do {
     reopened.holdUpdates = false
     check(!AppSettings(defaults: suite).holdUpdates, "as does letting go of it")
 
+    // The name widens the item, and a full bar drops an item rather than
+    // squeezing it, so an update must not turn it on for anybody.
+    check(!reopened.showFrontName, "the Claude in front is not named unless somebody asks for it")
+    reopened.showFrontName = true
+    check(AppSettings(defaults: suite).showFrontName, "and asking for it survives a restart")
+    // The icon is the other way round, and an update has no key for it either.
+    check(reopened.showFrontIcon, "the icon of the Claude in front is shown unless somebody turns it off")
+    reopened.showFrontIcon = false
+    check(!AppSettings(defaults: suite).showFrontIcon, "and turning it off survives a restart")
+
     check(UpdatePolicy.sparkleChecksOnItsOwn(holding: false),
           "without a hold, Sparkle's schedule finds and installs updates as it always has")
     check(!UpdatePolicy.sparkleChecksOnItsOwn(holding: true),
@@ -1307,7 +1317,7 @@ do {
     check(Set(english.keys) == Set(russian.keys), "both catalogs cover the same strings")
     check(russian["New Shortcut"] == "Новый ярлык", "the Russian catalog is actually translated")
     let rebasedKeys = ["Claude Desktop is updating", "Claude Desktop %@ is available",
-                       "Preparing the update…", "Version %@ · Up to date",
+                       "Preparing the update…", "%@ · Up to date",
                        "Check for Claude Updates", "Check for Claude Graft Updates",
                        "Checking for Claude Graft Updates…", "Update Claude Desktop manually",
                        "Update Claude…", "Update Claude Desktop?", "Quit All Claude & Update",
@@ -1903,6 +1913,19 @@ do {
         if text.contains("Graft.launch(") { launchers.append(file.lastPathComponent) }
     }
     check(launchers.isEmpty, "and nothing in the app launches a Claude without asking who is there")
+
+    // The layout suite walks every SwiftUI surface's accessibility tree and
+    // never reaches the status item, which is AppKit's and whose title is a
+    // figure that changes on every pass.
+    let menuBar = read("App/MenuBarController.swift")
+    check(menuBar.contains("setAccessibilityIdentifier(\"status-item\")"),
+          "the menu bar item can be asked for by a name that does not change with its figure")
+    check(menuBar.contains("setAccessibilityTitle([spoken, updateTip]"),
+          "and says in words whose figure it shows and what its symbol stands for")
+    check(menuBar.contains("window.setAccessibilityParent(NSApp)"),
+          "the open dropdown is among the app's windows, where a client looking for its controls searches")
+    check(!menuBar.contains("setAccessibilityWindows("),
+          "and the app's own list of windows is never replaced, which clearing again leaves empty")
 }
 
 section("Opening the selected shortcut")
@@ -2487,6 +2510,152 @@ do {
 
     monitor.setEntriesForTesting([])
     check(monitor.headline == nil, "nothing to show when there is nothing to show")
+}
+
+section("The Claude in front")
+
+do {
+    let monitor = UsageMonitor()
+    let idle = entry("Claude", fiveHour: 100, running: true)
+    let busy = entry("Claude 2", fiveHour: 46, running: true)
+    monitor.setEntriesForTesting([idle, busy])
+
+    // Unnamed, the tightest open window is the figure; with a name beside it,
+    // another account's figure would read as that account's own.
+    check(monitor.statusEntry(front: nil).map { !$0.named && $0.entry.name == "Claude" } == true,
+          "with nobody named, the bar shows the tightest window as it always has")
+    check(monitor.statusEntry(front: busy.profile).map { $0.named && $0.entry.name == "Claude 2" } == true,
+          "a named Claude is the one whose figure stands beside its name")
+    check(monitor.statusEntry(front: support.appending(path: "Somebody Else")).map { !$0.named } == true,
+          "a profile Graft does not know is not named")
+
+    let old = Date().addingTimeInterval(-8 * 3600)
+    let stale = entry("Claude 3", fiveHour: 99, running: true, live: false, sampled: old)
+    monitor.setEntriesForTesting([idle, stale])
+    let named = monitor.statusEntry(front: stale.profile)
+    check(named?.named == true && named?.entry.currentUsage == nil,
+          "a named Claude with only a stale figure is named without the figure")
+
+    let claudeApp = URL(fileURLWithPath: "/Applications/Claude.app")
+    check(FrontmostClaude.meaning(bundle: claudeApp, pid: 41, ownPid: 7, claudeApp: claudeApp) == .claude(41),
+          "a Claude coming forward is looked up by its pid")
+    check(FrontmostClaude.meaning(bundle: URL(fileURLWithPath: "/Applications/Claude Graft.app"),
+                                  pid: 7, ownPid: 7, claudeApp: claudeApp) == .keep,
+          "Graft coming forward for its dropdown leaves the name where it was")
+    check(FrontmostClaude.meaning(bundle: URL(fileURLWithPath: "/System/Applications/Finder.app"),
+                                  pid: 12, ownPid: 7, claudeApp: claudeApp) == .clear,
+          "anything else in front means no Claude is")
+    check(FrontmostClaude.meaning(bundle: URL(fileURLWithPath: "/Applications/Claude 2.app"),
+                                  pid: 13, ownPid: 7, claudeApp: claudeApp) == .clear,
+          "a shortcut's own launcher is not a Claude, whatever it is called")
+
+    let front = FrontmostClaude()
+    var asked: [URL] = []
+    front.onActivation = { asked.append($0) }
+    let two = support.appending(path: "Claude-2")
+    let three = support.appending(path: "Claude-3")
+    front.resolved(ticket: front.activated(.claude(41))!, profile: two)
+    check(front.profile == two, "a Claude brought forward is named once its profile is known")
+    check(asked == [two], "and its account is asked for its figure")
+
+    let late = front.activated(.claude(42))!
+    front.activated(.clear)
+    front.resolved(ticket: late, profile: three)
+    check(front.profile == nil, "a lookup that lands after the switch away names nobody")
+    check(asked == [two, three], "though the account it was about is still asked for")
+
+    let opening = front.activated(.claude(43))!
+    front.activated(.keep)
+    front.resolved(ticket: opening, profile: three)
+    check(front.profile == three, "opening the dropdown mid-lookup does not lose the Claude behind it")
+
+    let askedBefore = asked.count
+    front.resolved(ticket: front.activated(.claude(44))!, profile: two, switched: false)
+    check(front.profile == two && asked.count == askedBefore,
+          "the Claude in front at launch is named without anybody's figure being asked for")
+
+    // Green and teal are too light for white text as they come; nothing is
+    // shown in a colour its own name cannot be read on.
+    check(Shortcut.IconPreset.allCases.allSatisfy {
+        FrontTag.contrastWithWhite(FrontTag.fill(for: $0.accentColor)) >= FrontTag.minimumContrast
+    }, "every icon colour carries a name that can be read")
+    let navy = NSColor(srgbRed: 0.1, green: 0.2, blue: 0.6, alpha: 1)
+    let navyFill = FrontTag.fill(for: navy)
+    check(abs(navyFill.redComponent - 0.1) < 0.001 && abs(navyFill.greenComponent - 0.2) < 0.001
+          && abs(navyFill.blueComponent - 0.6) < 0.001,
+          "a colour that is already readable is left as the icon has it")
+    let mint = NSColor(srgbRed: 0.6, green: 0.95, blue: 0.7, alpha: 1)
+    check(FrontTag.fill(for: mint).greenComponent < 0.95
+          && FrontTag.contrastWithWhite(FrontTag.fill(for: mint)) >= FrontTag.minimumContrast,
+          "and one too pale is darkened until it is")
+
+    let long = FrontTag.image(name: "A shortcut named at great and unreasonable length", preset: .research)
+    check(long.size.width == FrontTag.maximumWidth, "a long name is cut short rather than widening the bar")
+    check(long.size.height == FrontTag.height, "and the tag keeps its height")
+    let short = FrontTag.image(name: "Work", preset: .work)
+    check(short.size.width < FrontTag.maximumWidth && short.accessibilityDescription == "Work",
+          "a short name takes only the room it needs and is read out by name")
+
+    let icon = FrontIcon.image(for: .work)
+    check(icon?.size == NSSize(width: FrontIcon.side, height: FrontIcon.side),
+          "the icon in the bar is the shortcut's own, drawn at the bar's size")
+    check(icon != nil && FrontIcon.image(for: .work) === icon,
+          "and drawn once, since the title is rebuilt on every switch")
+
+    func attachments(_ title: NSAttributedString) -> [NSTextAttachment] {
+        var found: [NSTextAttachment] = []
+        title.enumerateAttribute(.attachment, in: NSRange(location: 0, length: title.length)) { value, _, _ in
+            if let attachment = value as? NSTextAttachment { found.append(attachment) }
+        }
+        return found
+    }
+    func pictures(_ title: NSAttributedString) -> [NSRect] { attachments(title).map(\.bounds) }
+    /// Points of nothing above the first opaque pixel down the middle column.
+    func emptyOnTop(_ image: NSImage) -> CGFloat {
+        let scale: CGFloat = 2
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                         pixelsWide: Int(ceil(image.size.width * scale)),
+                                         pixelsHigh: Int(ceil(image.size.height * scale)),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return -1 }
+        rep.size = image.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        var row = 0
+        while row < rep.pixelsHigh, (rep.colorAt(x: rep.pixelsWide / 2, y: row)?.alphaComponent ?? 0) < 0.5 { row += 1 }
+        return CGFloat(row) / scale
+    }
+    let font = NSFont.menuBarFont(ofSize: 0)
+    let title = FrontTitle.make(icon: icon, tag: short, figure: 34, font: font)
+    check(title.string.hasSuffix(" 34%") && pictures(title).count == 2,
+          "the title carries the icon, the tag and then the figure")
+    check(pictures(title).allSatisfy { abs($0.midY - font.capHeight / 2) <= 0.5 },
+          "each picture's box is centred on the figure's capitals, so the figure stays where it was")
+    // The tag fills its own picture edge to edge, so what is empty above it in
+    // the box is exactly the space that lowers it.
+    check(attachments(title).last?.image.map(emptyOnTop) == FrontTitle.drop * 2,
+          "and the picture inside the box is drawn lower, level with Graft's own symbol")
+    check(attachments(title).last?.image?.accessibilityDescription == "Work",
+          "lowering the tag keeps the name it is read out by")
+    check(title.attribute(.foregroundColor, at: title.length - 1, effectiveRange: nil) == nil,
+          "the figure keeps the colour the bar picks for the wallpaper behind it")
+    func lowered(_ title: NSAttributedString) -> CGFloat? {
+        title.attribute(.baselineOffset, at: title.length - 1, effectiveRange: nil) as? CGFloat
+    }
+    check(lowered(title) == -FrontTitle.figureDrop, "the figure is lowered onto the symbol's line too")
+    let figureOnly = FrontTitle.make(icon: nil, tag: nil, figure: 34, font: font)
+    check(figureOnly.string == " 34%" && lowered(figureOnly) == -FrontTitle.figureDrop,
+          "and by as much with no Claude in front, so it does not jump as one comes forward")
+    let iconOnly = FrontTitle.make(icon: icon, tag: nil, figure: 34, font: font)
+    check(pictures(iconOnly).count == 1 && iconOnly.string.hasSuffix(" 34%"),
+          "the icon on its own stands beside the figure")
+    check(pictures(FrontTitle.make(icon: nil, tag: short, figure: 34, font: font)).count == 1,
+          "and so does the name on its own")
+    check(!FrontTitle.make(icon: icon, tag: nil, figure: nil, font: font).string.contains("%"),
+          "a Claude with no figure is shown alone")
 }
 
 section("Quitting")
@@ -3191,6 +3360,25 @@ do {
           "the same prompt in another folder or another account is another conversation")
     check(!copies.contains("other-opening"),
           "a retry starts where the original did, so a different opening is a different chat")
+
+    // A fork copies the whole conversation and asks more, which from the
+    // transcripts alone is exactly what a resumed copy looks like.
+    let forkedAway = [
+        (facts("original", last: 5), trace(["a", "b"], work: shared)),
+        (facts("forked", last: 9), trace(["a", "b", "f"], work: shared.merging(["f1": 3_000]) { $1 })),
+        (facts("retried-original", last: 1), trace(["a"], work: ["h1": 4_000])),
+    ]
+    check(Graft.resumedCopies(forkedAway).contains("original"),
+          "judged by transcripts alone, an original whose fork asked more reads as a copy of it")
+    let forkAware = Graft.resumedCopies(forkedAway, forks: ["forked": "original"])
+    check(!forkAware.contains("original") && !forkAware.contains("forked"),
+          "so neither half of a fork its record owns up to is ever a copy of the other")
+    check(forkAware.contains("retried-original"),
+          "while a retry of the original is still the copy it always was")
+    let freshFork = [(facts("source", last: 5), trace(["a", "b"], work: shared)),
+                     (facts("fresh-fork", last: 9), trace(["a", "b"], work: shared))]
+    check(Graft.resumedCopies(freshFork, forks: ["fresh-fork": "source"]).isEmpty,
+          "and a fork that has asked nothing of its own yet leaves its source standing")
 
     // And end to end, through a pass.
     let longer = "22222222-2222-4222-8222-222222222222"
@@ -4465,6 +4653,52 @@ do {
     try? fm.removeItem(at: now)
     try? fm.removeItem(at: Graft.claudeProjects.appending(path: "-Users-test-work")
                         .appending(path: "\(session).jsonl"))
+}
+
+do {
+    // A fork copies the whole conversation, so once every record is gone at
+    // once — the profile deleted, a sign-in moving its folder — the original
+    // reads as a copy its fork carried on, and a pass filing both again from
+    // their transcripts would have brought back the fork alone.
+    let account = "4d4d4d4d-4d4d-4d4d-8d4d-4d4d4d4d4d4d"
+    let org = "4e4e4e4e-4e4e-4e4e-8e4e-4e4e4e4e4e4e"
+    let original = "4f4f4f4f-4f4f-4f4f-8f4f-4f4f4f4f4f4f"
+    let fork = "50505050-5050-4050-8050-505050505050"
+    let opening = "Plan the move to the new Mac"
+    makeTranscript(session: original, owner: account, org: org, title: "Mac move", said: opening)
+    makeTranscript(session: fork, owner: account, org: org, title: "Mac move (fork)",
+                   last: "2026-08-29T18:00:10.000Z", said: opening, extra: [
+        "{\"parentUuid\":\"a-1\",\"promptId\":\"p-side\",\"cwd\":\"/Users/test/work\","
+            + "\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"And the routines on it?\"},"
+            + "\"uuid\":\"u-side\",\"timestamp\":\"2026-08-29T18:00:00.000Z\"}",
+    ])
+    let was = makeProfile("Claude-Forked-Here", account: account, org: org)
+    let wasOrg = was.appending(path: "claude-code-sessions").appending(path: account).appending(path: org)
+    func record(_ name: String, holding session: String, forkedFrom source: String? = nil) {
+        var fields: [String: Any] = ["sessionId": name, "cliSessionId": session]
+        fields["forkedFromSessionId"] = source
+        try! JSONSerialization.data(withJSONObject: fields).write(to: wasOrg.appending(path: "\(name).json"))
+    }
+    record("local_desktop-original", holding: original)
+    record("local_desktop-fork", holding: fork, forkedFrom: "local_desktop-original")
+
+    let untouched = Graft.fileMissingSessionRecords(filingInto: [was], now: Date().addingTimeInterval(120))
+    check(untouched.isEmpty, "a fork and the conversation it came from, both on record, are left alone")
+    check(Graft.loadSessionRecordState().forks[fork] == original,
+          "and a pass remembers which one the fork came from while both records stand")
+
+    try? fm.removeItem(at: was)
+    let now = makeProfile("Claude-Forked-Now", account: account, org: org)
+    let refiled = Set(Graft.fileMissingSessionRecords(filingInto: [now], now: Date().addingTimeInterval(120))
+        .map(\.cliSessionId))
+    check(refiled == [original, fork],
+          "so with every record gone at once, the conversation a fork came from is filed again beside the fork")
+
+    try? fm.removeItem(at: now)
+    for session in [original, fork] {
+        try? fm.removeItem(at: Graft.claudeProjects.appending(path: "-Users-test-work")
+                            .appending(path: "\(session).jsonl"))
+    }
 }
 
 do {

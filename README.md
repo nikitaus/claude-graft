@@ -61,7 +61,8 @@ Open it from Spotlight or the Dock and sign into the other account.
 
 Each shortcut works without Graft running and can adopt an existing profile
 folder. Its custom name and icon appear in Finder and on the pinned shortcut;
-the running app keeps Claude's name and icon. Graft leaves Claude's app untouched.
+the running app keeps Claude's name and icon, so the menu bar shows which one is
+in front instead. Graft leaves Claude's app untouched.
 
 <img src="docs/assets/window.png" width="660" alt="The shortcut's settings">
 
@@ -89,6 +90,11 @@ share, and the number in the menu bar is then the week.
 **Start Session** sends one short request to open that account's five-hour
 window. It uses a few tokens and runs only when you press it.
 
+With several Claudes open, the menu bar shows which one you are using: its
+shortcut's icon sits beside that account's usage. Turn on **Show the name of
+the Claude in front** to add its name as well. The Dock can't do this, because
+macOS gives every running Claude the stock name and icon.
+
 ## Updating
 
 Graft checks hourly and installs signed updates automatically. Use
@@ -97,10 +103,11 @@ turn on **Hold Claude Graft updates**: it keeps checking, shows a new version in
 the menu bar, and installs it only when you press **Install**.
 
 To control Claude's updates, enable **Update Claude Desktop manually** in
-Graft's menu or Settings; it takes effect when each Claude next starts.
-**Update Claude…** asks before closing running instances and stopping their
-workflows. Finish your work first. Your logins, settings and shortcuts stay in
-place; managed installations may need administrator approval.
+Graft's menu or Settings; it takes effect when each Claude next starts. The
+Claude Desktop line at the top of Graft's menu turns red when a release is
+ready, and **Update Claude…** asks before closing running instances and stopping
+their workflows. Finish your work first. Your logins, settings and shortcuts
+stay in place; managed installations may need administrator approval.
 
 If Claude's updater reopens the wrong profile, Graft can restore the affected
 shortcut while Graft is running. Interrupted sessions still need resuming.
@@ -127,6 +134,11 @@ organization restrictions still apply. Sharing copies missing desktop MCP server
 definitions, keeping existing definitions and later edits local. Account-linked
 connectors need a separate sign-in. Files under `~/.claude`, including skills,
 plugins and transcripts, are already shared by every instance.
+
+**VoiceOver and automation tools reach every control.** Each button, switch and
+field in Graft's window, menu and Settings says what it does and which account it
+acts on. Each also has a fixed identifier, such as `dropdown.Claude-2.open` or
+`settings.hold-updates`, that stays the same in every language.
 
 Old chats may show “Session not found on disk” after Claude Code prunes their
 transcripts. Raise `cleanupPeriodDays` in `~/.claude/settings.json` to keep them
@@ -163,6 +175,7 @@ merges both histories. That saved set lets it return to its own chats later.
 ```sh
 ./build.sh                  # App in build.noindex/
 ./test.sh                   # Regression checks in a throwaway directory
+./test-layout.sh            # Window layout and VoiceOver checks; needs Accessibility access
 ./test-sidebar.sh           # Sidebar checks in disposable profiles
 ./release.sh                # Test, build universal, sign and package
 Tools/render-diagrams.sh    # Render these diagrams into docs/assets
