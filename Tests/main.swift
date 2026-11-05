@@ -1480,31 +1480,32 @@ do {
     // repository but gives Pages nothing, so a rename that missed one of these
     // would take it quietly dead.
     let links = read("Sources/App/Links.swift")
-    let site = read("docs/index.html")
     let readme = read("README.md")
     check(links.contains("static let owner = \"\(owner)\""),
           "the app sends people to the project's own account")
-    check(site.contains("github.com/\(owner)/claude-graft"),
-          "and so does the site")
+
+    // The original project's site is its author's page about the product, and
+    // served from this fork's Pages it read as this fork passing itself off as
+    // that product. Pages here carries the update feed and nothing else.
+    check(!FileManager.default.fileExists(atPath: repo.appending(path: "docs/index.html").path),
+          "this fork's Pages serves the update feed rather than a copy of the original site")
 
     // The tip jar is a second account under a second spelling. GitHub Sponsors
     // cannot pay into an Indian account, so the money goes through Ko-fi, whose
     // handle carries no hyphens — neither name can be built out of the other,
-    // which is why all four places are read rather than derived from one.
+    // which is why every place is read rather than derived from one.
     let kofi = "aadityavmore"
     check(links.contains("static let kofiAccount = \"\(kofi)\"") && links.contains("https://ko-fi.com/"),
           "the app's support link goes to the tip jar")
     check(read(".github/FUNDING.yml").contains("ko_fi: \(kofi)"),
           "and so does the button at the top of the repository")
-    check(site.contains("https://ko-fi.com/\(kofi)"),
-          "and the one on the site")
     check(readme.contains("https://ko-fi.com/\(kofi)"),
           "and the one in the README")
 
     // A sponsor page nobody can pay into is worse than no link at all: it reads
     // as an oversight rather than a decision, and it takes a press to find out
     // that the money has nowhere to go.
-    check(![links, site, readme].contains(where: { $0.contains("github.com/sponsors") }),
+    check(![links, readme].contains(where: { $0.contains("github.com/sponsors") }),
           "and nothing still offers the sponsor page that cannot take the money")
 
     // An enclosure without a signature is one every client refuses, and
