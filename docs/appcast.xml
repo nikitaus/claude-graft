@@ -3,6 +3,25 @@
     <channel>
         <title>Claude Graft</title>
         <item>
+            <title>1.1.8.2</title>
+            <pubDate>Thu, 05 Nov 2026 20:38:14 +0000</pubDate>
+            <link>https://github.com/nikitaus/claude-graft</link>
+            <sparkle:version>1.1.8.2</sparkle:version>
+            <sparkle:shortVersionString>1.1.8.2</sparkle:shortVersionString>
+            <sparkle:minimumAutoupdateVersion>1.1.0</sparkle:minimumAutoupdateVersion>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Updates without a website</h2>
+
+<p>Updates are now read straight from this fork's repository rather than from a
+website published beside it, so the fork no longer keeps a site at all. Nothing
+changes in how they arrive: Graft still checks every hour and installs a new
+version by itself, or waits for you to press Install while updates are held.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>
+]]></description>
+            <enclosure url="https://github.com/nikitaus/claude-graft/releases/download/v1.1.8.2/ClaudeGraft-1.1.8.2.zip" length="4736156" type="application/octet-stream" sparkle:edSignature="XpEPUKM1Sp/XZOpvyyV8CUvRD16tXKRIyhpJPs+brRxX/pTcw+gDdQtbYD56aCekcS5d3r1rdze73a9orzvgCA=="/>
+        </item>
+        <item>
             <title>1.1.8.1</title>
             <pubDate>Thu, 05 Nov 2026 20:19:05 +0000</pubDate>
             <link>https://github.com/nikitaus/claude-graft</link>
