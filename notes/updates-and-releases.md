@@ -246,7 +246,10 @@ gone because it named the original author's domain, which Pages would otherwise
 try to serve this fork from, and `docs/index.html` is gone because it is the
 original author's page about the product: served from this fork's Pages it read
 as this fork passing itself off as that product. Pages here serves the feed and
-nothing else, and the suite fails if the page comes back.
+nothing else, and the suite fails if the page comes back. The README says what
+this fork changes and nothing else, with one line naming the original project;
+the original's own description of its product stays the original's, and the
+copyright notice stays in `LICENSE`, as MIT asks.
 
 The release itself runs in CI from `.github/workflows/release.yml`, started by
 hand from main once `VERSION` has been bumped. It hands `release.sh` the

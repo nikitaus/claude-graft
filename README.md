@@ -1,209 +1,92 @@
-> **This is a personal fork** of [Claude Graft](https://github.com/aaditya-v-more/claude-graft)
-> by [Aaditya More](https://github.com/aaditya-v-more), not the original project. It adds live
-> usage for plans without a five-hour window, such as Ultra, and says why when a figure cannot be
-> had live. Its builds update from [this fork's releases](https://github.com/nikitaus/claude-graft/releases),
-> installed by hand the first time from the disk image there. Everything below describes the
-> original project, and the site, Homebrew cask and tip jar it links to are its author's.
-
 <div align="center">
 
 <img src="docs/assets/icon.png" width="120" alt="Claude Graft">
 
-<h1>Claude Graft</h1>
-
-<p>
-  <b>1× is less but 5× is too much.</b> <i>(Or 20× is less, lol.)</i><br>
-  One Claude login is never quite the right amount.
-</p>
-
-<p>
-  <a href="https://github.com/aaditya-v-more/claude-graft/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/aaditya-v-more/claude-graft?style=for-the-badge&logo=github&logoColor=white&labelColor=1C1A17&color=C2410C"></a>
-  <a href="https://github.com/aaditya-v-more/claude-graft/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/aaditya-v-more/claude-graft/total?style=for-the-badge&logo=github&logoColor=white&label=Total%20downloads&labelColor=1C1A17&color=C2410C"></a>
-  <a href="https://github.com/aaditya-v-more/homebrew-claude-graft"><img alt="Homebrew cask" src="https://img.shields.io/badge/Homebrew-cask-C2410C?style=for-the-badge&logo=homebrew&logoColor=white&labelColor=1C1A17"></a>
-  <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-C2410C?style=for-the-badge&logo=apple&logoColor=white&labelColor=1C1A17">
-  <a href="https://github.com/aaditya-v-more/claude-graft/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/aaditya-v-more/claude-graft?style=for-the-badge&logo=github&logoColor=white&labelColor=1C1A17&color=C2410C"></a>
-  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/aaditya-v-more/claude-graft?style=for-the-badge&labelColor=1C1A17&color=C2410C"></a>
-  <a href="https://ko-fi.com/aadityavmore"><img alt="Support this on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white&labelColor=1C1A17"></a>
-</p>
-
-<p>
-  <a href="https://aaditya-v-more.github.io/claude-graft/"><b>Website</b></a>
-  &nbsp;·&nbsp;
-  <a href="#install"><b>Install</b></a>
-  &nbsp;·&nbsp;
-  <a href="https://github.com/aaditya-v-more/claude-graft/releases"><b>Releases</b></a>
-</p>
-
-<br>
-
-<img src="docs/assets/menu-bar.png" width="460" alt="Live usage for both accounts in the menu bar">
+<h1>Claude Graft, personal fork</h1>
 
 </div>
 
-Run multiple Claude Desktop accounts side by side, each with its own login,
-shortcut and optional shared Claude Code history — including pins and sidebar
-order. More on [the site](https://aaditya-v-more.github.io/claude-graft/).
+This is a personal fork of [Claude Graft](https://github.com/aaditya-v-more/claude-graft),
+the macOS app that runs several Claude Desktop logins side by side. It is built
+on the original's 1.1.8 release, and what the app does and how it works is
+described there. This page covers only what is different here.
+
+## What is different
+
+**Usage for plans without a five-hour window.** Ultra is spent against the week
+alone, with Fable allowed a share of it. The original requires a five-hour
+figure in Anthropic's usage answer and refuses any answer that lacks one, so an
+Ultra account reads "the usage service sent something unexpected" and falls back
+to figures its profile recorded days or weeks earlier. Here either window is
+enough: such an account shows its week and its Fable share live from Anthropic,
+with no five-hour bar, and the number in the menu bar is the week. The profile's
+own record is read the same way, a figure written with a fraction is no longer
+skipped as missing, and should the weekly window stop being sent the same figure
+is taken from the newer list of limits in the answer.
+
+**It says why a figure is not live.** The original shows "Anthropic's usage
+service did not answer" for every failure but a locked keychain, including a
+saved login that has run out, when no request was made at all. Here the line
+under each account names what happened: a login that has expired, one Anthropic
+refused, a rate limit, an answer that could not be read, or no answer. A login
+that failed before anything was sent is checked again on the next pass rather
+than minutes later, and each failure is written once to `diagnostics.log` in
+`~/Library/Application Support/ClaudeGraft/`, with the status code or, for a
+login, each saved entry's expiry and permissions but never the token itself.
+
+**Updates come from this fork.** Builds here check this repository's own update
+feed and accept only releases signed with this fork's key, so a release of the
+original project never replaces them. Version numbers have four parts, starting
+at 1.1.8.1, so that none can be confused with an original release; that matters
+because a shortcut refreshes its launcher only when the number changes. The
+repository's Pages site serves the update feed and nothing else.
 
 ## Install
 
-Requires macOS 13+ and Claude Desktop in `/Applications` or `~/Applications`.
-Works on Apple Silicon and Intel, in English and Russian. Sidebar sharing was
-tested with Claude Desktop 2.110.1 on macOS 27.
+Take the disk image from [Releases](https://github.com/nikitaus/claude-graft/releases),
+quit any Claude Graft that is running, and drag the app into Applications. The
+app is signed without an Apple developer account, so macOS refuses a downloaded
+copy until its quarantine flag is cleared:
 
 ```sh
-brew install --cask aaditya-v-more/claude-graft/claude-graft
+xattr -dr com.apple.quarantine "/Applications/Claude Graft.app"
 ```
 
-Homebrew may ask you to trust this third-party cask. Graft is ad-hoc signed,
-not notarised; the cask clears its quarantine flag. For a manual install, get
-the **.dmg** from [Releases](https://github.com/aaditya-v-more/claude-graft/releases)
-and allow it in **System Settings → Privacy & Security**.
+On first launch macOS asks for access to the "Claude Safe Storage" keychain
+item; choose **Always Allow**. Every release after this one arrives by itself.
 
-## Making a Claude
-
-Choose a name, icon and where its chats come from, then press **Create Shortcut**.
-Open it from Spotlight or the Dock and sign into the other account.
-
-<img src="docs/assets/shortcuts.png" width="580" alt="Claude and Claude 2 side by side in Spotlight">
-
-Each shortcut works without Graft running and can adopt an existing profile
-folder. Its custom name and icon appear in Finder and on the pinned shortcut;
-the running app keeps Claude's name and icon, so the menu bar shows which one is
-in front instead. Graft leaves Claude's app untouched.
-
-<img src="docs/assets/window.png" width="660" alt="The shortcut's settings">
-
-## Bringing over chats from a previous login
-
-An empty sidebar after signing into a new shortcut can mean your chats are
-still in the profile you previously used. Graft finds them and offers
-**Copy Them Here**. Quit every Claude instance before copying.
-
-<img src="docs/assets/chats-elsewhere.png" width="605" alt="The Chats found elsewhere section, saying that Claude 2 is holding 188 chats for the account this profile is signed into that this one has not got, listing five of them with the dates they were last active, above a Copy Them Here button">
-
-This copies missing chats once, keeping the originals and anything already in
-the destination. For ongoing sync, choose chat sharing instead.
-
-## Usage in the menu bar
-
-See live usage and reset times for your accounts, even when they aren't running.
-Graft reads each profile's access token and sends it only to `api.anthropic.com`;
-it leaves refresh tokens and logins alone. Choose **Always Allow**
-at the keychain prompt; a new Graft build may ask again.
-
-A plan without a five-hour window, such as Ultra, shows its week and its Fable
-share, and the number in the menu bar is then the week.
-
-**Start Session** sends one short request to open that account's five-hour
-window. It uses a few tokens and runs only when you press it.
-
-With several Claudes open, the menu bar shows which one you are using: its
-shortcut's icon sits beside that account's usage. Turn on **Show the name of
-the Claude in front** to add its name as well. The Dock can't do this, because
-macOS gives every running Claude the stock name and icon.
-
-## Updating
-
-Graft checks hourly and installs signed updates automatically. Use
-**Check for Claude Graft Updates** to check now. To choose when Graft updates,
-turn on **Hold Claude Graft updates**: it keeps checking, shows a new version in
-the menu bar, and installs it only when you press **Install**.
-
-To control Claude's updates, enable **Update Claude Desktop manually** in
-Graft's menu or Settings; it takes effect when each Claude next starts. The
-Claude Desktop line at the top of Graft's menu turns red when a release is
-ready, and **Update Claude…** asks before closing running instances and stopping
-their workflows. Finish your work first. Your logins, settings and shortcuts
-stay in place; managed installations may need administrator approval.
-
-If Claude's updater reopens the wrong profile, Graft can restore the affected
-shortcut while Graft is running. Interrupted sessions still need resuming.
-
-## Worth knowing
-
-**Avoid using the same conversation in two accounts at once:** shared transcripts
-can lose messages. Graft warns when opening shared chats from its window or menu;
-opening directly from the Dock skips that warning.
-
-**Sharing merges both histories.** Chat changes sync in both directions at
-launch. Switching back to your own chats does not remove copies already merged
-into the source. Back up your profiles first if you need an untouched copy. For a
-one-time move, use [Copy Them Here](#bringing-over-chats-from-a-previous-login).
-
-**Pins and sidebar order sync after closing the linked Claudes.** Open the Code
-sidebar in each profile once, then quit both and launch either shortcut to sync.
-Pins, unpins, pinned order and Code sort choice carry across; other histories,
-custom groups and Cowork settings stay local. Graft backs up sidebar settings
-before changes and shows a retry message if it cannot sync safely.
-
-**Permissions stay local.** Choose the permission mode in each Claude profile;
-organization restrictions still apply. Sharing copies missing desktop MCP server
-definitions, keeping existing definitions and later edits local. Account-linked
-connectors need a separate sign-in. Files under `~/.claude`, including skills,
-plugins and transcripts, are already shared by every instance.
-
-**VoiceOver and automation tools reach every control.** Each button, switch and
-field in Graft's window, menu and Settings says what it does and which account it
-acts on. Each also has a fixed identifier, such as `dropdown.Claude-2.open` or
-`settings.hold-updates`, that stays the same in every language.
-
-Old chats may show “Session not found on disk” after Claude Code prunes their
-transcripts. Raise `cleanupPeriodDays` in `~/.claude/settings.json` to keep them
-longer. Deleting a shortcut keeps its profile folder by default.
-
-## How it works
-
-Transcripts live in the shared `~/.claude/projects` folder. Sidebar records live
-under each profile's account. Graft copies those records both ways so Claude can
-save renames and archive changes, while selected settings use links.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/layout-dark.svg">
-  <img alt="Claude 2 and Claude 1 side by side. Claude 2's settings are a symlink to Claude 1's, their record folders hold copies carried both ways, and a hidden .graft-own folder seeds Claude 2's own chats into the shared set once. Both profiles read one set of transcripts in ~/.claude/projects, which has no account in its path." src="docs/assets/layout-light.svg" width="760">
-</picture>
-
-Each shortcut prepares its profile and syncs changes before opening Claude.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/launch-dark.svg">
-  <img alt="Pressing a shortcut: if a Claude is already on that profile it is brought forward, otherwise the settings links are pointed at the source, chat changes are carried both ways, records are filed for sessions that closed without one, and then Claude launches." src="docs/assets/launch-light.svg" width="760">
-</picture>
-
-The first shared launch saves the profile's original chats in `.graft-own` and
-merges both histories. That saved set lets it return to its own chats later.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/merge-dark.svg">
-  <img alt="A profile's own chats go to .graft-own on the first launch and are copied straight back into a shared folder alongside the source's chats. Going back to its own chats keeps what the stash names and hands the rest over." src="docs/assets/merge-light.svg" width="760">
-</picture>
-
-## Building it
+Coming from the original installed with Homebrew, remove it without `--zap`,
+which would also delete Graft's shortcuts list and settings. Your shortcuts,
+profiles and chats live outside the app and carry over:
 
 ```sh
-./build.sh                  # App in build.noindex/
+brew uninstall --cask claude-graft
+```
+
+## Building and releasing
+
+```sh
 ./test.sh                   # Regression checks in a throwaway directory
-./test-layout.sh            # Window layout and VoiceOver checks; needs Accessibility access
-./test-sidebar.sh           # Sidebar checks in disposable profiles
-./release.sh                # Test, build universal, sign and package
-Tools/render-diagrams.sh    # Render these diagrams into docs/assets
+./build.sh                  # App in build.noindex/
 ```
 
-Needs Xcode's Swift toolchain. The first build fetches a pinned, checksum-verified
-Sparkle release; `VERSION` sets the app version. The optional sidebar suite needs
-Node and Claude Desktop; the app itself needs no Node installation.
+With only the Command Line Tools and no Xcode, the macOS 27 SDK cannot compile
+the app's views, although the tests pass. Build against the older SDK the tools
+ship beside it:
 
-## Contributing
+```sh
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
+```
 
-Bug reports and patches welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and
-[CLAUDE.md](CLAUDE.md) before changing profile or credential handling. Diagnostics
-are in `~/Library/Application Support/ClaudeGraft/`: `diagnostics.log` and
-`state-report.txt`. Pushes and pull requests run tests and a universal build.
-
-## Supporting it
-
-Free, with no account or telemetry. If it helps, the
-[tip jar](https://ko-fi.com/aadityavmore) keeps it going.
+A release is made by bumping `VERSION`, optionally adding a note in
+`docs/release-notes/<version>.html`, pushing to `main` and running the
+**Release** workflow from the Actions tab. It tests, builds for Apple silicon
+and Intel, signs with the `SPARKLE_PRIVATE_KEY` repository secret, publishes the
+disk image and the zip, and only then adds the entry to the feed. When GitHub is
+short of Apple silicon machines, choose `macos-15-intel`; the release is
+universal either way.
 
 ## Licence
 
-[MIT](LICENSE).
+MIT, as the original: see [LICENSE](LICENSE), which keeps the original
+copyright notice. The changes in this fork are released under the same terms.

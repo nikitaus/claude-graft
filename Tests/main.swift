@@ -1493,14 +1493,13 @@ do {
     // The tip jar is a second account under a second spelling. GitHub Sponsors
     // cannot pay into an Indian account, so the money goes through Ko-fi, whose
     // handle carries no hyphens — neither name can be built out of the other,
-    // which is why every place is read rather than derived from one.
+    // which is why every place is read rather than derived from one. This
+    // fork's README describes only what the fork changes, so it carries none.
     let kofi = "aadityavmore"
     check(links.contains("static let kofiAccount = \"\(kofi)\"") && links.contains("https://ko-fi.com/"),
           "the app's support link goes to the tip jar")
     check(read(".github/FUNDING.yml").contains("ko_fi: \(kofi)"),
           "and so does the button at the top of the repository")
-    check(readme.contains("https://ko-fi.com/\(kofi)"),
-          "and the one in the README")
 
     // A sponsor page nobody can pay into is worse than no link at all: it reads
     // as an oversight rather than a decision, and it takes a press to find out
