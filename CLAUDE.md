@@ -98,6 +98,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 - **A stash beside a folder blocks withdrawal as well as filing** (`mayFileRecords`, both directions).
 - **Every way out drops the pairs**, and a pair is read by its borrowing half: `mirrorPairs(borrowedBy:)`.
 - **A first pass that finds a stash already there is a second one;** `dropBorrowedCopies` runs only on a folder resolving inside the profile.
+- **A source that moved is a re-pair, not a first pass:** `firstPass` is asked before any pair is dropped, and `repair` hands the old source its copies back first.
 - **Chats an account switch left behind are copied, never moved,** and nothing moves while any Claude is up.
 - **That offer is silenced at the door, never in the window.**
 - **A store may spell account and organization by their first eight characters** — `counterpartDirectory`. Every walk asks `isDirectory`; `skills-plugin` is not an account.
