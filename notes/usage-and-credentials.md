@@ -9,6 +9,17 @@ never the refresh token: Anthropic rotates those and using one signs Claude
 Desktop out. Nothing is written back to Claude's config, cookies or keychain.
 The token goes to `api.anthropic.com` and nowhere else.
 
+**A borrowed token is never written down on the way out.** Up to 1.1.8.4 the
+usage request and Start Session went through `URLSession.shared`, whose
+`URLCache` stores the request it answered beside the answer, `Authorization`
+header included, in `~/Library/Caches/graft.claude-graft/Cache.db`. A review in
+the original project found one `api.anthropic.com` exchange there with a bearer
+token in it, readable by any process running as the person without the keychain
+being asked. Both now go through `UsageAPI.session`, ephemeral and with no cache
+at all, the way `ClaudeDesktopUpdater` already did; every launch empties
+`URLCache.shared` so what an older version left there goes, and the suite fails
+if anything under `Sources/` names `URLSession.shared` again.
+
 **The keychain is asked once, and only when asking is the way through.** Every
 read tries silently first, so a build already on the item's ACL never sees a
 dialog no matter who asked. When that read comes back shut the app asks rather

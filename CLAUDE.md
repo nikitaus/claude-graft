@@ -117,6 +117,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 ### Usage and credentials — [notes/usage-and-credentials.md](notes/usage-and-credentials.md)
 
 - **Credentials are borrowed, never taken.** Only the access token is decrypted; nothing is written back; the token goes to `api.anthropic.com` alone.
+- **A borrowed token touches no cache:** it goes out through `UsageAPI.session`, ephemeral with no `URLCache`; nothing names `URLSession.shared`, and a launch empties its cache.
 - **The keychain is asked once, and only when asking is the way through** — `ClaudeCredentials.mayRaiseDialog`, made silent by `SecKeychainSetUserInteractionAllowed`.
 - **Only a person starts a session.** The suite fails on a fourth caller or one wired to `onAppear`, `onReceive` or a timer.
 - **One account, one figure:** both detail views read `UsageMonitor.entry(for:)`.
