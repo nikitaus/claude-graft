@@ -135,6 +135,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 
 - **⌘Q does not quit** while the status item is reachable; `QuitPolicy` lets through Quit, logout and an update's relaunch.
 - **A status item that exists is not one you can click:** `MenuBarPlacement.isReachable`, which counts the notch as out of reach.
+- **The Dock icon goes only when the item can be reached** — `WindowPolicy`, asked when a window closes and again `placementGrace` after a hidden launch.
 - **`HSplitView`, not `NavigationSplitView`,** and notices sit beside the split view in a vertical stack.
 - **Every control is named and identified by hand** with `identified`, on the control, never on a stack. Never call `NSApp.setAccessibilityWindows`.
 - **No `MenuBarExtra`. Nothing blocking in a view body. Long-lived objects live in `enum Shared`.**
