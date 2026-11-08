@@ -178,7 +178,7 @@ final class ShortcutStore: ObservableObject {
     @discardableResult
     func delete(_ id: UUID, deletingProfile: Bool = false) -> String? {
         guard let shortcut = shortcut(id) else { return nil }
-        Installer.uninstall(shortcut)
+        Installer.uninstall(shortcut, among: shortcuts)
 
         // As the disk compares them, which ignores case: `Claude-Work` and
         // `claude-work` are one profile, and deleting either one's would take
@@ -216,11 +216,13 @@ final class ShortcutStore: ObservableObject {
         return problem
     }
 
-    /// Never created, and holding no data: safe to drop without asking.
+    /// Never created, and holding no data: safe to drop without asking. The
+    /// bundle is looked for last, since finding none means reading every app
+    /// in Applications.
     func isDraft(_ shortcut: Shortcut) -> Bool {
         shortcut.installedName == nil
-            && Installer.installedBundle(for: shortcut) == nil
             && !FileManager.default.fileExists(atPath: shortcut.profileDir.path)
+            && Installer.installedBundle(for: shortcut, among: shortcuts) == nil
     }
 
     /// Where a shortcut actually reads its chats from, following one hop.
