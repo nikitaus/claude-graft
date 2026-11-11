@@ -1,0 +1,27 @@
+<h2>Fixes from the original project</h2>
+
+<p>Sessions Graft recovered into a Claude were filed with every browser
+permission check switched off, whatever had been chosen, and a session that
+named no permission mode was filed as auto. They are now filed with the
+person's own browser setting and the default mode, and records already filed
+the old way are rewritten on the next pass.</p>
+
+<p>The login used to ask Anthropic for usage no longer passes through the
+shared web cache, where it was written to disk beside the answer, and every
+launch empties that cache. After a Deny at the keychain prompt, no other
+account in the same refresh asks again, and a refresh right after Start
+Session asks nobody.</p>
+
+<p>Pinned chats sync again with Claude 4.16336.0 and later. Shared chats stay
+with the right account when the Claude they come from signs into another
+account or organization, two passes no longer write the same state at once,
+and profile folder names are compared the way the disk compares them,
+ignoring case.</p>
+
+<p>A shortcut's app is found even after it is renamed in Finder, a folder edit
+waits for Update, and creating or updating a shortcut no longer stops the
+window. The Dock icon stays while the menu bar item cannot be reached,
+behind the notch included. Claude's own updater runs hidden and signed out,
+and an update in progress is picked up again after a restart.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>
