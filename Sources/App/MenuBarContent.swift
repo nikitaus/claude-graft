@@ -171,7 +171,9 @@ struct MenuBarContent: View {
             DispatchQueue.main.async {
                 starting = nil
                 problem = failure?.errorDescription
-                usage.refresh(store, interactive: true)
+                // Starting the session already asked the keychain for this
+                // press, so this asks nobody, and only about this account.
+                usage.refresh(store, interactive: true, prompting: .no, focus: profile)
             }
         }
     }

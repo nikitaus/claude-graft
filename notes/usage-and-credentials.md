@@ -166,7 +166,10 @@ Opening the dropdown asks for a current figure but does not skip the backoff,
 because a failing endpoint would then be asked again on every open. Failures
 back off 60/120/300/900/1800 seconds and a success clears the count; a
 `Retry-After` from the service wins and is the one wait a person pressing
-refresh cannot skip.
+refresh cannot skip. It holds only as long as the service is the one asking: a
+later failure that carries none starts a wait of Graft's own, and the service's
+mark comes off with it, or a press would sit out an ordinary backoff as though
+the service had asked for it.
 
 A login that fails before anything is sent is the exception, and it is also the
 one the row has to name. Every failure but a shut keychain used to read
@@ -180,6 +183,25 @@ rather than minutes later, since there was nothing to be patient with, and
 `usage-failed` and `usage-login-unusable` in `diagnostics.log` carry the status
 code, or each cached entry's expiry and scopes without its token, once each time
 they change.
+
+`backsOff` first let only an expired login and one that could not be read skip
+the wait. Everything `ClaudeCredentials` throws happens before a request, so all
+of it now does: a shut keychain, which the next pass reads silently and so
+retries without a dialog, and a config caught mid-write. That one is Claude
+renaming a new config over the old, not a profile with no login, so `token`
+reads through `readableConfigJSON` and throws `configUnreadable` instead of
+telling the row there is no login to ask with.
+
+**A pass that has been told no asks nobody after it.** The key is one item for
+every profile, so once a read in a pass comes back shut, every profile after it
+in that pass is read silently (`UsageMonitor.prompting`). Before, each profile
+was asked whatever had just happened, and Start Session's follow-up refresh
+went out allowed to ask and with no focus, so a Deny on a Mac with three
+Claudes was answered with three more dialogs. That refresh now asks nobody and
+only about the account the session was started on: the press already asked the
+keychain once, in starting the session. The profiles after a Deny fail the same
+way, and their "choose Always Allow" no longer replaces the answer the person
+just gave in the dropdown's problem line.
 
 
 **The last answer outlives the process.** `liveCache` was memory alone, so every

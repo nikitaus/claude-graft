@@ -112,6 +112,7 @@
 "That is Claude's own profile folder. Pick another name." = "Это папка собственного профиля Claude. Выберите другое имя.";
 "That login was refused. Open the profile once so Claude can renew it." = "Данные входа отклонены. Откройте профиль, чтобы Claude обновил их.";
 "That profile's login has expired. Open it once so Claude can renew it." = "Срок действия данных входа этого профиля истёк. Откройте профиль, чтобы Claude обновил их.";
+"That profile's settings file could not be read just now. The next refresh tries again." = "Файл настроек этого профиля сейчас не удалось прочитать. При следующем обновлении Graft попробует снова.";
 "That profile's login was refused. Open it once so Claude can renew it." = "Данные входа этого профиля отклонены. Откройте профиль, чтобы Claude обновил их.";
 "Teal" = "Бирюзовая";
 "The app is removed from %@ either way.\n\nIts profile folder, %@, holds that account's login and chat history. Deleting it cannot be undone." = "Приложение в %@ будет удалено в любом случае.\n\nВ папке профиля %@ хранятся данные входа и история чатов этой учётной записи. Удаление нельзя отменить.";

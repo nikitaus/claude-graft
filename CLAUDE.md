@@ -118,12 +118,12 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 
 - **Credentials are borrowed, never taken.** Only the access token is decrypted; nothing is written back; the token goes to `api.anthropic.com` alone.
 - **A borrowed token touches no cache:** it goes out through `UsageAPI.session`, ephemeral with no `URLCache`; nothing names `URLSession.shared`, and a launch empties its cache.
-- **The keychain is asked once, and only when asking is the way through** — `ClaudeCredentials.mayRaiseDialog`, made silent by `SecKeychainSetUserInteractionAllowed`.
+- **The keychain is asked once, and only when asking is the way through** — `ClaudeCredentials.mayRaiseDialog`, made silent by `SecKeychainSetUserInteractionAllowed`. A pass told no asks no other profile (`UsageMonitor.prompting`), and Start Session's follow-up refresh asks nobody.
 - **Only a person starts a session.** The suite fails on a fourth caller or one wired to `onAppear`, `onReceive` or a timer.
 - **One account, one figure:** both detail views read `UsageMonitor.entry(for:)`.
-- **Polling:** `mayUseCache` gives five minutes to a tick, two for an open profile, a minute for the dropdown, two seconds for a press; `arrival` queues rather than drops; failures back off and `Retry-After` wins.
+- **Polling:** `mayUseCache` gives five minutes to a tick, two for an open profile, a minute for the dropdown, two seconds for a press; `arrival` queues rather than drops; failures back off and `Retry-After` wins until a failure arrives without one.
 - **A plan need not have a five-hour window.** Ultra has only the week: either window is enough, `fiveHour` is nil rather than zero, and the menu bar leads with the week. A profile's own sample needs only `sd`.
-- **A row says why its figure is not live** in the words of the error behind it (`failureNote`). A login that failed before anything was sent does not back off.
+- **A row says why its figure is not live** in the words of the error behind it (`failureNote`). Nothing `ClaudeCredentials` throws backs off (`backsOff`): it failed before anything was sent.
 - **The last live answer outlives the process** in `live-usage.json`, loaded once on the serial queue before the cache is read or changed, so a restart shows it at its real age instead of falling back to the profile's record.
 
 ### Interface — [notes/interface.md](notes/interface.md)

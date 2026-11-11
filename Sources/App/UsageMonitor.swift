@@ -418,7 +418,8 @@ final class UsageMonitor: ObservableObject {
                                         interactive: interactive && focused,
                                         freshness: focused ? wanted : .cached,
                                         running: running,
-                                        prompting: focused ? asking : elsewhere,
+                                        prompting: Self.prompting(asking: asking, elsewhere: elsewhere,
+                                                                  focused: focused, locked: locked),
                                         problem: &problem,
                                         locked: &locked)
                 if let live = outcome.reading, let fetched = outcome.fetched,
@@ -564,6 +565,9 @@ final class UsageMonitor: ObservableObject {
             else {
                 return LiveOutcome(failure: L10n.text("This profile has no saved login to ask Anthropic with."))
             }
+            // The key is the process's from here on, so nothing after this
+            // in the pass is shut out.
+            locked = false
             let reading = try UsageAPI.fetch(token: token.value)
             let fetched = Date()
             liveCache[profile.path] = (fetched, reading)
@@ -578,13 +582,7 @@ final class UsageMonitor: ObservableObject {
             // line. The row itself always says, quietly. The keychain being
             // shut is worth surfacing either way, since it is one click to fix
             // and everything live depends on it.
-            switch error {
-            case ClaudeCredentials.Failure.noKeychainAccess,
-                 ClaudeCredentials.Failure.keychainDeclined:
-                locked = true
-            default:
-                break
-            }
+            let keychain = Self.isKeychainFailure(error)
             let why = Self.failureNote(for: error)
             // Once per change rather than once per pass: a login that has run
             // out fails on every tick, and the log is for the moment it began.
@@ -593,15 +591,25 @@ final class UsageMonitor: ObservableObject {
                                                   "reason": Self.reasonCode(error)])
             }
             lastFailure[profile.path] = why
-            if interactive { problem = (error as? LocalizedError)?.errorDescription }
+            // After a Deny the profiles after it are read silently and fail
+            // the same way; their "choose Always Allow" would bury the answer
+            // the person just gave.
+            if interactive, !(keychain && locked) {
+                problem = (error as? LocalizedError)?.errorDescription
+            }
+            if keychain { locked = true }
             guard Self.backsOff(after: error) else {
                 return LiveOutcome(reading: cached?.reading, fetched: cached?.fetched, failure: why)
             }
 
-            var retryAfter: TimeInterval?
-            if case UsageAPI.Failure.http(_, let asked) = error, let asked {
-                retryAfter = asked
+            let retryAfter = Self.waitAsked(by: error)
+            if retryAfter != nil {
                 serverAskedToWait.insert(profile.path)
+            } else {
+                // The wait that follows is our own, which a press may skip.
+                // Kept from an earlier Retry-After, it held a press off until
+                // an ordinary backoff ran out.
+                serverAskedToWait.remove(profile.path)
             }
             let failures = (backoff[profile.path]?.failures ?? 0) + 1
             let delay = Self.retryDelay(afterFailures: failures, retryAfter: retryAfter)
@@ -636,14 +644,33 @@ final class UsageMonitor: ObservableObject {
     /// A failure that happened before anything was sent has nothing to be
     /// patient with. The next pass reads the profile's login again for the
     /// cost of a file and finds the renewed one the moment Claude writes it;
-    /// waiting minutes first only put that off.
+    /// waiting minutes first only put that off. Everything `ClaudeCredentials`
+    /// throws is such a failure, a shut keychain included: the next pass reads
+    /// it silently, so retrying raises no dialog.
     static func backsOff(after error: Error) -> Bool {
-        switch error {
-        case ClaudeCredentials.Failure.expired, ClaudeCredentials.Failure.notSignedIn:
-            return false
-        default:
-            return true
-        }
+        !(error is ClaudeCredentials.Failure)
+    }
+
+    /// The `Retry-After` a failure carried, if the service sent one.
+    static func waitAsked(by error: Error) -> TimeInterval? {
+        guard case UsageAPI.Failure.http(_, let asked) = error else { return nil }
+        return asked
+    }
+
+    static func isKeychainFailure(_ error: Error) -> Bool {
+        guard let failure = error as? ClaudeCredentials.Failure else { return false }
+        return failure == .noKeychainAccess || failure == .keychainDeclined
+    }
+
+    /// Who may raise the keychain dialog for one profile in a pass. Once the
+    /// keychain has said no in this pass, nobody: the key is one item for
+    /// every profile, so each profile after a Deny was another dialog asking
+    /// the same question, three of them for one press on a Mac with three
+    /// Claudes.
+    static func prompting(asking: ClaudeCredentials.Prompting,
+                          elsewhere: ClaudeCredentials.Prompting,
+                          focused: Bool, locked: Bool) -> ClaudeCredentials.Prompting {
+        locked ? .no : (focused ? asking : elsewhere)
     }
 
     /// The failure as the log records it: short enough to grep for, and
