@@ -106,7 +106,7 @@ can only ever find a record where an earlier one left it, and a delete in a
 sidebar writes a marker naming it the same way.
 
 **A filed record never grants more than its transcript says.** Every record
-the sweep wrote up to 2.0.0 carried `chromePermissionMode:
+the sweep wrote up to 1.1.8.4 carried `chromePermissionMode:
 skip_all_permission_checks`, whatever the person had chosen, and a transcript
 naming no permission mode was filed as `auto`. Neither value came out of a
 transcript and no note gave a reason for either. The browser setting is a
@@ -247,8 +247,8 @@ as long as the marker existed. Only markers naming no transcript reach it now.
 Markers are never pruned, so the one that named a session goes on naming it on
 every pass for good, and the sweep read it afresh each time: one session,
 deleted from Claude's sidebar on 16 October, was logged as withdrawn on 54
-passes in a row across 1.1.8 and 2.0.0 builds, and every `sweep.end` said
-`"withdrawn":5`. Nothing was being done to it. Its marker, its transcript and
+passes in a row across the original project's 1.1.8 and 2.0.0 builds, and
+every `sweep.end` said `"withdrawn":5`. Nothing was being done to it. Its marker, its transcript and
 the copies a mirror had carried into Claude-2 were all untouched since the day
 they were written, no record for it existed anywhere, and `session-records.json`
 had it in `withdrawn` and nowhere else; the count was the running total of all

@@ -1809,7 +1809,7 @@ enum Graft {
             .appending(path: "local_\(facts.cliSessionId).json")
     }
 
-    /// The bytes versions up to 2.0.0 filed for the same facts, which said to
+    /// The bytes versions up to 1.1.8.4 filed for the same facts, which said to
     /// skip every browser permission check. Kept only so a record still in
     /// that shape is known to be this app's, and rewritten without it.
     private static func olderSessionRecordData(for facts: SessionFacts) -> Data? {
