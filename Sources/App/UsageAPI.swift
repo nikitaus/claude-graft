@@ -7,8 +7,19 @@ import Foundation
 enum UsageAPI {
     static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
+    /// Every request carrying a borrowed token goes through this. The shared
+    /// session's cache stores each request beside its answer, `Authorization`
+    /// header and all, in a file under Caches that anything running as the
+    /// person can read without asking the keychain.
+    static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     struct Reading: Equatable, Codable {
-        /// Nil when the plan has no five-hour window, as Ultra does not.
+        /// Nil when the account has no five-hour limit, as Ultra has none.
         var fiveHour: Int?
         var week: Int
         var fiveHourReset: Date?
@@ -51,7 +62,7 @@ enum UsageAPI {
         var response: URLResponse?
         var failure: Error?
         let finished = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { data, urlResponse, error in
+        session.dataTask(with: request) { data, urlResponse, error in
             payload = data
             response = urlResponse
             failure = error
@@ -95,7 +106,13 @@ enum UsageAPI {
     /// there when `seven_day` is not sent means the next window to go the same
     /// way as `five_hour` does not refuse the answer a second time.
     static func reading(from body: [String: Any]) -> Reading? {
+        // Since November 2026 an account with no five-hour limit is sent
+        // `five_hour: null`, or no key at all, while a limited one gets the
+        // window even idle, at zero. Anything else there is an answer this
+        // cannot read, and reading it as no limit would hide a real one.
+        let sent = body["five_hour"].map { !($0 is NSNull) } ?? false
         let session = window(body["five_hour"])
+        if sent, session == nil { return nil }
         let weekly = window(body["seven_day"])
             ?? limit(body["limits"]) { $0["kind"] as? String == "weekly_all" }
         guard session != nil || weekly != nil else { return nil }

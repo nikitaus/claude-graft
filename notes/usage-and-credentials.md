@@ -7,7 +7,26 @@ Where the usage figures come from, how the token is read out of Claude's safe st
 **Credentials are borrowed, never taken.** Only the access token is decrypted,
 never the refresh token: Anthropic rotates those and using one signs Claude
 Desktop out. Nothing is written back to Claude's config, cookies or keychain.
-The token goes to `api.anthropic.com` and nowhere else.
+Claude's safe-storage key does seal two things of Graft's making, both for
+[shared usage](shared-usage.md): the Code environment it writes into a closed
+profile, and the logins signed in from the pane, kept in Graft's own
+`pool/accounts.json`. A token goes to `api.anthropic.com` and nowhere else. The
+one other address is `platform.claude.com`, which a sign-in from the pane sends
+the browser's one-time code to, and what it answers with is a login of Graft's
+own, never one of Claude's. claude.ai is the third, for [artifacts](artifacts.md) alone: it sees a
+sign-in made in Graft's own window, which stays in that window's web store and
+is never read out of it.
+
+**A borrowed token is never written down on the way out.** Up to 2.0.0 the
+usage request and Start Session went through `URLSession.shared`, whose
+`URLCache` stores the request it answered beside the answer, `Authorization`
+header included, in `~/Library/Caches/graft.claude-graft/Cache.db`. The review
+before 2.0.1 found one `api.anthropic.com` exchange there with a bearer token in
+it, readable by any process running as the person without the keychain being
+asked. Both now go through `UsageAPI.session`, ephemeral and with no cache at
+all, the way `AccountSignIn` and `ClaudeDesktopUpdater` already did; every
+launch empties `URLCache.shared` so what an older version left there goes, and
+the suite fails if anything under `Sources/` names `URLSession.shared` again.
 
 **The keychain is asked once, and only when asking is the way through.** Every
 read tries silently first, so a build already on the item's ACL never sees a
@@ -43,7 +62,20 @@ That item's decrypt ACL names each trusted build by code hash, so an ad-hoc
 signature earns a fresh entry every time the app is rebuilt — nine entries for
 the same `build.noindex/Claude Graft.app` path were counted on the development machine,
 alongside ten `cdhash:` entries in the item's partition list. A Developer ID
-would be one `teamid:` entry that survives every version. Both a suppressed read
+would be one `teamid:` entry that survives every version. Ad-hoc, the dialog
+comes back at every build and every update, and at every launch for as long as
+it is answered with the one-time Allow, which adds nothing to the list.
+
+Releases stay as `release.sh` signs them. A local build is signed with the
+Mac's Apple Development certificate when there is one
+(`Tools/signing-identity.sh`, team `H4RJ5YGKZA` on the Mac Mini), whose
+designated requirement names the certificate rather than the code, so "Always
+Allow" once lets every later development build in. Seen on the Mac Mini on 11
+November 2026: the first build signed this way asked once and was let in with
+Always Allow, and a later build with a different code hash opened, read the key
+and lent without a dialog. A rebuild of unchanged sources for one architecture
+came out with the same hash, so it proves nothing either way; the universal
+build is what changed it. The installed release goes on asking as before. Both a suppressed read
 and a declined dialog answer `errSecAuthFailed`, so the two are told apart by
 which call was made, never by the status.
 
@@ -67,17 +99,27 @@ token and `anthropic-beta: oauth-2025-04-20`. It answers with `five_hour` and
 `subscription_type`, a `limits` array of `weekly_scoped` per-model windows, and
 `extra_usage` credits. The last two are parsed but not shown anywhere yet.
 
-**A plan need not have a five-hour window at all.** Ultra is spent against the
-week alone, with Fable allowed a share of it, and Claude's own usage page shows
-those two rows and nothing else. The parser required `five_hour` and refused
-every answer that lacked it, so on the machine this was reported from both
-accounts read "the usage service sent something unexpected" and showed figures a
-month old as though they were the account's. The answer, asked for with the
-command line's login on that machine, sends `"five_hour":null` and a `seven_day`
-carrying `utilization` and a `resets_at` written to the microsecond, beside
-`limit_dollars`, `used_dollars`, `remaining_dollars` and `locked_reason`, all
-null. Two dozen other top-level keys came back null too, most of them under code
-names. `limits` holds the same week again as
+**No five-hour limit is not zero used.** Since November 2026 some accounts have
+only a weekly limit, and the endpoint answers them with `five_hour: null` or no
+`five_hour` key at all. A limited account always gets the object, idle
+included: nothing used reads `{"utilization": 0, "resets_at": null}`. So a null
+or absent window is an account with no limit, while an object that is there and
+cannot be read is a broken answer and is refused, as it always was. Reading the
+missing window as 0% put an account at 94% of its week on the menu bar as 0%,
+and, because the bar's Claude was picked by its five-hour figure, made it lose
+to any other account in use.
+
+Ultra is one such plan. It is spent against the week alone, with Fable allowed a
+share of it, and Claude's own usage page shows those two rows and nothing else.
+The parser required `five_hour` and refused every answer that lacked it, so on
+the machine this was reported from both accounts read "the usage service sent
+something unexpected" and showed figures a month old as though they were the
+account's. The answer, asked for with the command line's login on that machine,
+sends `"five_hour":null` and a `seven_day` carrying `utilization` and a
+`resets_at` written to the microsecond, beside `limit_dollars`, `used_dollars`,
+`remaining_dollars` and `locked_reason`, all null. Two dozen other top-level
+keys came back null too, most of them under code names. `limits` holds the same
+week again as
 `{"kind":"weekly_all","group":"weekly","percent":…,"severity":…,"scope":null,"is_active":true}`,
 ahead of the scoped entries. So either window is enough, `fiveHour` is nil
 rather than zero, no five-hour bar is drawn, and the menu bar leads with the
@@ -91,15 +133,23 @@ where `fh` is the five-hour percentage used and `sd` the seven-day one, written
 only while that instance runs. It is ~180KB and grows, so it is parsed once per
 change and cached against modification time and size.
 
-A sample needs `sd` and nothing else, for the same reason. On that same machine
-a Claude that was open, green dot and all, reported a sample four days old,
-which is what requiring both figures does to a profile whose samples stopped
-carrying `fh` when the plan changed — whether that is what it writes now was not
-seen, and nothing else about the history needs it to be. A sample that leaves
-`fh` out keeps the figure from the one before it, but only from within five
-hours, or a plan that lost the window would go on showing its last figure for
-ever. Either figure may carry a fraction; `Graft.percentage` reads both shapes
-for both sources.
+A sample without `fh` is what Claude writes for an account with no five-hour
+limit, but one alone does not prove it: a limited account goes on writing `fh`,
+`fh: 0` when idle, and a single weekly-only sample can sit between complete
+ones. `hasNoFiveHourLimit` therefore wants the newest sample without `fh`, the
+one before it on the same organization, if there is one, without it as well, and no complete
+sample of that organization inside the last five hours. Otherwise the newest
+complete sample of that organization is the figure, and gaps neither read as
+0% nor move the five-hour reset. Both kinds of account are in use, so neither
+reading may become the default for the other. In November 2026 this machine's
+own histories held no sample without `fh`.
+
+A sample needs `sd` and nothing else. On that same machine a Claude that was
+open, green dot and all, reported a sample four days old, which is what
+requiring both figures does to a profile whose samples stopped carrying `fh`
+when the plan changed — whether that is what it writes now was not seen, and
+nothing else about the history needs it to be. Either figure may carry a
+fraction; `Graft.percentage` reads both shapes for both sources.
 
 Claude Code's command line keeps **one** login for the whole machine in the
 keychain, so `CLAUDE_CONFIG_DIR` does not isolate accounts. That is why Start
@@ -155,20 +205,43 @@ Opening the dropdown asks for a current figure but does not skip the backoff,
 because a failing endpoint would then be asked again on every open. Failures
 back off 60/120/300/900/1800 seconds and a success clears the count; a
 `Retry-After` from the service wins and is the one wait a person pressing
-refresh cannot skip.
+refresh cannot skip. It holds only as long as the service is the one asking: a
+later failure that carries none starts a wait of Graft's own, and the service's
+mark comes off with it, or a press would sit out an ordinary backoff as though
+the service had asked for it.
 
-A login that fails before anything is sent is the exception, and it is also the
-one the row has to name. Every failure but a shut keychain used to read
-"Anthropic's usage service did not answer", including a cached token that had
-run out or never covered `user:profile` — no request made at all — and both
-accounts on the machine this was reported from showed that line with nothing in
-`usage-status.json` to say more. `failureNote` says what happened in the words
-`ClaudeCredentials.Failure` and `UsageAPI.Failure` already had for it,
-`backsOff` lets a login that failed locally be read again on the next pass
-rather than minutes later, since there was nothing to be patient with, and
-`usage-failed` and `usage-login-unusable` in `diagnostics.log` carry the status
-code, or each cached entry's expiry and scopes without its token, once each time
-they change.
+Only a failure that came back from the service, or no answer at all, backs
+off. One on this Mac — the keychain shut, no login, an expired one, a config
+caught mid-write — happens before anything is sent, is put right on this Mac,
+and is tried again on the next pass. All of them used to read "Anthropic didn't
+answer" and wait up to half an hour, which pointed the person at the network
+and kept the account stale for thirty minutes after they had fixed the cause.
+`UsageMonitor.cameFromService` is the line between the two, and each local one
+says what it is in the row.
+
+A config that is there and will not parse is Claude renaming a new one over it,
+not a profile with no login, so `ClaudeCredentials.tokens` reads it through
+`readableConfigJSON` and throws `configUnreadable`: retried, never taken for
+signed out. Read as empty, it left a lender with nothing to be recognised by
+for a pass.
+
+**A pass that has been told no asks nobody after it.** The key is one item for
+every profile, so once a read in a pass comes back shut, every profile after it
+in that pass is read silently. Before, `mayRaiseDialog(.yes)` answered yes for
+each profile whatever had just happened, and Start Session's follow-up refresh
+went out allowed to ask and with no focus, so a Deny on a Mac with three
+Claudes was answered with three more dialogs. That refresh now asks nobody and
+only about the account the session was started on: the press already asked the
+keychain once, in starting the session.
+
+An answer from the service names its own fix as well. A refused login and a
+rate limit used to read "Anthropic didn't answer" like a request that got
+nothing back, so `failureLine` gives them the words `UsageAPI.Failure` already
+had for them: open the profile, or wait. Both accounts on the machine this was
+reported from showed the old line with nothing in `usage-status.json` to say
+more, so `usage-failed` and `usage-login-unusable` in `diagnostics.log` carry
+the status code, or each cached entry's expiry and scopes without its token,
+once each time they change.
 
 
 **The last answer outlives the process.** `liveCache` was memory alone, so every

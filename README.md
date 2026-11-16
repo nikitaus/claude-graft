@@ -8,31 +8,32 @@
 
 This is a personal fork of [Claude Graft](https://github.com/aaditya-v-more/claude-graft),
 the macOS app that runs several Claude Desktop logins side by side. It is built
-on the original's 1.1.8 release, and what the app does and how it works is
+on the original's 2.0.1 release, and what the app does and how it works is
 described there. This page covers only what is different here.
 
 ## What is different
 
-**Usage for plans without a five-hour window.** Ultra is spent against the week
-alone, with Fable allowed a share of it. The original requires a five-hour
-figure in Anthropic's usage answer and refuses any answer that lacks one, so an
-Ultra account reads "the usage service sent something unexpected" and falls back
-to figures its profile recorded days or weeks earlier. Here either window is
-enough: such an account shows its week and its Fable share live from Anthropic,
-with no five-hour bar, and the number in the menu bar is the week. The profile's
-own record is read the same way, a figure written with a fraction is no longer
-skipped as missing, and should the weekly window stop being sent the same figure
-is taken from the newer list of limits in the answer.
+**Usage for plans without a five-hour window.** The original reads an account
+with no five-hour limit as of 2.0.1, and so does this fork. Ultra is one, spent
+against the week alone with Fable allowed a share of it, and a few more answers
+from such an account are read here: should the weekly window stop being sent,
+the same figure is taken from the newer list of limits in the answer, a figure
+written with a fraction is no longer skipped as missing, and a reset written to
+the microsecond keeps its countdown. An answer that still cannot be read is
+written to `diagnostics.log` by its shape, never by its figures, so the next
+change to it names itself.
 
-**It says why a figure is not live.** The original shows "Anthropic's usage
-service did not answer" for every failure but a locked keychain, including a
-saved login that has run out, when no request was made at all. Here the line
-under each account names what happened: a login that has expired, one Anthropic
-refused, a rate limit, an answer that could not be read, or no answer. A login
-that failed before anything was sent is checked again on the next pass rather
-than minutes later, and each failure is written once to `diagnostics.log` in
+**It says why a figure is not live.** The original names what went wrong on
+this Mac, such as a login that has expired, and reads everything else as
+Anthropic not answering. Here a login Anthropic refused and a rate limit say so
+too, and each failure is written once to `diagnostics.log` in
 `~/Library/Application Support/ClaudeGraft/`, with the status code or, for a
 login, each saved entry's expiry and permissions but never the token itself.
+
+**The last live figure survives a restart.** Each answer from Anthropic is kept
+with the moment it was taken, so after an update or a relaunch the menu shows
+that figure at its real age instead of an older one from the profile's own
+record.
 
 **Updates come from this fork.** Builds here check this repository's own update
 feed and accept only releases signed with this fork's key, so a release of the
