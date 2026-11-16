@@ -1,0 +1,64 @@
+<h2>Everything in the original's 2.0.1</h2>
+
+<p>This release brings the fork up to the original project's 2.0.1, the largest
+release it has had. Your shortcuts, profiles and chats carry over as they are.</p>
+
+<h3>Share usage between your accounts</h3>
+
+<p>A Claude can now let its Claude Code draw on your other accounts when its own
+allowance runs low, without signing out of anything. Add another of your
+Claudes under Shared usage, or sign in to an account from Graft without making a
+shortcut for it. Only the model's answers come from the other accounts; your
+chats, artifacts and connectors stay with the Claude's own account, and the Chat
+tab is never shared. The menu bar shows every account a Claude draws on, rings
+the one answering in red, and runs the conversation on screen across it. The
+dropdown lets you choose which account answers each conversation. Sharing needs
+macOS 15.</p>
+
+<h3>Artifacts, projects and search across accounts</h3>
+
+<p>Three new panes reach claude.ai for every account you sign in to there.
+Artifacts lists them all together: open one, copy its link, make it private or
+public, rename, duplicate or delete it, and export it as Markdown, PDF, a Word
+document or its page source, or share it with a group you keep in Graft.
+Projects lists every account's projects, and Search Chats searches every
+account's chats and Claude Code sessions at once. Each account signs in once,
+with the code claude.ai emails you, in a window of Graft's; the sign-in is kept
+apart for that account and is never read by Graft.</p>
+
+<h3>A new window</h3>
+
+<p>The window has a proper sidebar, and every page fits at its smallest size
+without scrolling. Every Claude and every lent account gets a colour of its
+own. A new Claude starts with chats of its own, and sharing another Claude's
+chats is a choice you make on its page; the Claudes you already have keep
+reading what they read before. The new Help menu leads to the original
+project: its site, its releases, its issues and its author.</p>
+
+<p>Pinned chats sync between profiles again with current versions of Claude,
+sessions from another Mac are left out of the sidebar, and Claude's updater
+stays hidden and signed out while it installs.</p>
+
+<h2>What this fork keeps</h2>
+
+<p>Accounts without a five-hour window, such as Ultra, are now shown the
+original's way: the row says the account has no five-hour limit in place of
+that bar, Start Session is left out for it, and the menu bar shows its week
+with a W in front, so W 94% means 94% of the week. Underneath, the fork still
+takes the week from the list of limits should the weekly window go missing,
+reads figures written with a fraction, and keeps the countdown for a reset
+written to the microsecond.</p>
+
+<p>A login Anthropic refused and a rate limit still say so under the account,
+the last live figure still survives a restart, and updates still come from this
+fork's own releases.</p>
+
+<p>Works on Apple Silicon and Intel, with macOS 13 or later supported.</p>
+
+<h3>Upgrading from 1.0.x</h3>
+
+<p>As with 1.1.0, shared profiles merge their chat histories on their next
+launch. Going back to a profile's own chats preserves what it brought, but
+copies already merged into the source stay there. If you need an untouched
+copy, back up your Claude profile folders in <code>~/Library/Application
+Support</code> before upgrading.</p>
