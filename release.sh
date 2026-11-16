@@ -59,7 +59,16 @@ if [ ! -f "$ROOT/Resources/AppIcon.icns" ]; then
     sips -Z 180 "$(dirname "$ICONSET")/icon.png" --out "$ROOT/docs/assets/icon.png" >/dev/null
 fi
 
-"$ROOT/test.sh" >/dev/null
+# Quiet when it passes, but a failure has to name its check. Thrown away
+# whole, a hosted run that failed the suite said nothing but its exit code, and
+# the one machine that failed was the only one that could say which check.
+SUITE_LOG="$(mktemp)"
+if ! "$ROOT/test.sh" > "$SUITE_LOG"; then
+    grep -v '^  ok ' "$SUITE_LOG" >&2
+    rm -f "$SUITE_LOG"
+    exit 1
+fi
+rm -f "$SUITE_LOG"
 echo "tests passed"
 
 # Sign with a Developer ID when one is available, otherwise ad-hoc. Resolved
