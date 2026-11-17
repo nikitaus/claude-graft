@@ -191,6 +191,63 @@ enum FrontIcon {
     }
 }
 
+/// Everyone the Claude in front draws on, in the order it draws on them, its
+/// own account first. The account answering the conversation in front is
+/// drawn full size in a red ring and the rest small and faint, so which one
+/// is spending is read off the bar without opening anything. The order never
+/// changes; only the light moves, so an icon is always found where it was.
+enum PoolStrip {
+    static let faint: CGFloat = 13
+    static let gap: CGFloat = 3
+    /// The ring goes inside the lit icon's own square, since a taller strip
+    /// would no longer sit where the figure beside it expects. Claude's icon
+    /// fills nearly all of that square and is as warm as the ring, so drawn
+    /// full size the two ran together; two points smaller leaves a hairline
+    /// between them.
+    static let ring: CGFloat = 1
+    static let ringed: CGFloat = 16
+    static let ringRadius: CGFloat = 4.75
+    private static var drawn: [String: NSImage] = [:]
+
+    static func image(_ presets: [Shortcut.IconPreset], lit: Int?) -> NSImage? {
+        guard presets.count > 1 else { return nil }
+        let key = presets.map(\.rawValue).joined(separator: ",") + "|\(lit ?? -1)"
+        if let image = drawn[key] { return image }
+        let icons = presets.compactMap(FrontIcon.image(for:))
+        guard icons.count == presets.count else { return nil }
+        let image = strip(icons, lit: lit)
+        drawn[key] = image
+        return image
+    }
+
+    static func strip(_ icons: [NSImage], lit: Int?) -> NSImage {
+        let full = FrontIcon.side
+        let sides = icons.indices.map { lit == nil || $0 == lit ? full : faint }
+        let width = sides.reduce(0, +) + gap * CGFloat(sides.count - 1)
+        return NSImage(size: NSSize(width: width, height: full), flipped: false) { _ in
+            var x: CGFloat = 0
+            for (index, icon) in icons.enumerated() {
+                let side = sides[index]
+                let slot = NSRect(x: x, y: ((full - side) / 2).rounded(), width: side, height: side)
+                if index == lit {
+                    let inset = (side - ringed) / 2
+                    icon.draw(in: slot.insetBy(dx: inset, dy: inset), from: .zero, operation: .sourceOver,
+                              fraction: 1)
+                    let path = NSBezierPath(roundedRect: slot.insetBy(dx: ring / 2, dy: ring / 2),
+                                            xRadius: ringRadius, yRadius: ringRadius)
+                    path.lineWidth = ring
+                    NSColor.systemRed.setStroke()
+                    path.stroke()
+                } else {
+                    icon.draw(in: slot, from: .zero, operation: .sourceOver, fraction: lit == nil ? 1 : 0.45)
+                }
+                x += side + gap
+            }
+            return true
+        }
+    }
+}
+
 /// The status item's title once it shows the Claude in front.
 enum FrontTitle {
     /// How far each picture is drawn below the centre of its own box.
@@ -213,8 +270,14 @@ enum FrontTitle {
 
     /// No colour is given to the figure, so it keeps the one the bar chooses
     /// for the wallpaper behind it; only the icon and the tag bring their own.
-    static func make(icon: NSImage?, tag: NSImage?, figure: Int?, font: NSFont) -> NSAttributedString {
+    static func make(icon: NSImage?, tag: NSImage?, figure: Graft.Usage.Headline?,
+                     font: NSFont, ticker: NSImage? = nil, afterImage: Bool = true) -> NSAttributedString {
         let title = NSMutableAttributedString()
+        // The gap is there to part the title from the symbol before it; with
+        // no symbol it is a space the bar spends on nothing.
+        func gap(_ text: String) -> NSAttributedString {
+            NSAttributedString(string: title.length == 0 && !afterImage ? "" : text, attributes: [.font: font])
+        }
         for picture in [icon, tag].compactMap({ $0 }) {
             let size = picture.size
             let lowered = NSImage(size: NSSize(width: size.width, height: size.height + drop * 2),
@@ -229,14 +292,112 @@ enum FrontTitle {
             // picture alone would have sat, which is what keeps the block.
             attachment.bounds = NSRect(x: 0, y: ((font.capHeight - size.height) / 2).rounded() - drop,
                                        width: lowered.size.width, height: lowered.size.height)
-            title.append(NSAttributedString(string: " ", attributes: [.font: font]))
+            title.append(gap(" "))
             title.append(NSAttributedString(attachment: attachment))
         }
         if let figure {
-            title.append(NSAttributedString(string: " \(figure)%", attributes: [
+            title.append(gap(" "))
+            title.append(NSAttributedString(string: text(figure), attributes: [
                 .font: font, .baselineOffset: -figureDrop,
             ]))
         }
+        if let ticker {
+            let attachment = NSTextAttachment()
+            attachment.image = ticker
+            // Set like the figure: the text inside is the bar's own size, a
+            // point smaller, and lowered by as much as the figure is.
+            attachment.bounds = NSRect(x: 0, y: font.descender - figureDrop,
+                                       width: ticker.size.width, height: ticker.size.height)
+            title.append(gap("  "))
+            title.append(NSAttributedString(attachment: attachment))
+        }
         return title
+    }
+
+    /// A week's figure looks exactly like a five-hour one, and the two run out
+    /// at very different rates, so the week carries a letter saying which.
+    static func text(_ figure: Graft.Usage.Headline) -> String {
+        figure.isWeekly ? L10n.format("W %ld%%", figure.percent) : "\(figure.percent)%"
+    }
+
+    /// The figure read out, with the words for what the letter only hints at.
+    static func spoken(_ name: String, _ figures: Graft.Usage) -> String {
+        figures.fiveHour.map { L10n.format("%@, %ld%% of 5 hours", name, $0) }
+            ?? L10n.format("%@, %ld%% of the week", name, figures.week)
+    }
+
+    /// One account in the tooltip. One without a five-hour limit says so,
+    /// where a zero would pass for a window nobody has started yet.
+    static func tooltipLine(_ name: String, _ figures: Graft.Usage) -> String {
+        var line = figures.fiveHour.map {
+            L10n.format("%@: %ld%% of 5 hours, %ld%% of the week", name, $0, figures.week)
+        } ?? L10n.format("%@: no 5-hour limit, %ld%% of the week", name, figures.week)
+        if let fable = figures.fable { line += L10n.format(", %ld%% Fable", fable) }
+        return line
+    }
+}
+
+/// The conversation on screen, running across the bar beside the figure for
+/// as long as it is there: its title, or "New chat" until it has one, and the
+/// account answering it. A conversation from before sharing began, opened to
+/// read, has no account answering it and shows its title alone.
+///
+/// Drawn into a picture of fixed width rather than set as text. Text that
+/// scrolls a character at a time changes width with every letter in a
+/// proportional font, and a status item that changes width moves every item
+/// to its left with it, several times a second.
+enum NewChatTicker {
+    static let width: CGFloat = 150
+    /// The space between the end of the text and its start coming round again.
+    static let gap: CGFloat = 28
+    /// Points moved per tick, and the tick, which together make about thirty
+    /// points a second: readable, and slow enough not to pull the eye.
+    static let step: CGFloat = 2.5
+    static let tick: TimeInterval = 0.08
+    /// Ticks held at the start of each pass, so the beginning can be read.
+    static let pause = 18
+
+    static func text(title: String?, account: String?) -> String {
+        let name = title ?? L10n.text("New chat")
+        return account.map { L10n.format("%@ · %@", name, $0) } ?? name
+    }
+
+    static func spoken(title: String?, account: String?) -> String {
+        let name = title ?? L10n.text("New chat")
+        return account.map { L10n.format("Conversation on screen “%@”, answered by %@", name, $0) }
+            ?? L10n.format("Conversation on screen “%@”", name)
+    }
+
+    static func attributes(_ font: NSFont) -> [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: font.pointSize - 1), .foregroundColor: NSColor.labelColor]
+    }
+
+    /// The length of one pass, or nil for text short enough to stand still.
+    static func cycle(_ text: String, font: NSFont) -> CGFloat? {
+        let length = ceil((text as NSString).size(withAttributes: attributes(font)).width)
+        return length > width ? length + gap : nil
+    }
+
+    /// `offset` is how far the text has moved left, in points.
+    static func image(_ text: String, offset: CGFloat, font: NSFont) -> NSImage {
+        let attributes = attributes(font)
+        let size = (text as NSString).size(withAttributes: attributes)
+        let scrolls = cycle(text, font: font) != nil
+        let shown = scrolls ? width : ceil(size.width)
+        let height = ceil(size.height)
+        // Drawn when shown rather than now, so the label colour is the one the
+        // bar's appearance gives it at that moment.
+        let image = NSImage(size: NSSize(width: shown, height: height), flipped: false) { rect in
+            NSBezierPath(rect: rect).addClip()
+            let x = scrolls ? -offset : 0
+            (text as NSString).draw(at: NSPoint(x: x, y: 0), withAttributes: attributes)
+            if scrolls {
+                (text as NSString).draw(at: NSPoint(x: x + ceil(size.width) + gap, y: 0),
+                                        withAttributes: attributes)
+            }
+            return true
+        }
+        image.accessibilityDescription = text
+        return image
     }
 }

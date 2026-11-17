@@ -2255,9 +2255,9 @@ enum Graft {
     /// the profile. `fh` is the five-hour window, `sd` the seven-day one, both
     /// percentages already used.
     struct Usage: Equatable {
-        /// Nil for a plan that has no five-hour window at all, which is not the
-        /// same as one with nothing spent in it. Ultra has only the week, and
-        /// requiring this figure refused every answer such an account got.
+        /// Nil on an account with no five-hour limit, never zero: zero is a
+        /// window with nothing spent in it yet, which a limited account reads
+        /// all through an idle day.
         var fiveHour: Int?
         var week: Int
         var organization: String?
@@ -2274,20 +2274,17 @@ enum Graft {
         /// nothing useful about a five-hour window that has since rolled over.
         var isStale: Bool { Date().timeIntervalSince(sampled) > 5 * 60 * 60 }
 
-        /// The figure the menu bar leads with. A plan without a five-hour
-        /// window is spent against its week, so that is the number that runs
-        /// out; leading with nothing would read as an account with no limit.
-        var headline: Int { fiveHour ?? week }
-    }
+        /// The one figure the menu bar gives this account.
+        struct Headline: Equatable {
+            var percent: Int
+            var isWeekly: Bool
+        }
 
-    /// A percentage as the service or a profile writes one: whole, or with a
-    /// fraction. Reading only whole numbers skipped every sample that carried
-    /// a fraction as though it were missing a figure.
-    static func percentage(_ value: Any?) -> Int? {
-        switch value {
-        case let number as Int: return number
-        case let number as Double: return Int(number.rounded())
-        default: return nil
+        /// The five-hour window where there is one. An account without one can
+        /// only run out of its week, and its five-hour figure would be a zero
+        /// that never moves.
+        var headline: Headline {
+            fiveHour.map { Headline(percent: $0, isWeekly: false) } ?? Headline(percent: week, isWeekly: true)
         }
     }
 
@@ -2320,16 +2317,23 @@ enum Graft {
         return parsed
     }
 
+    /// A percentage as the service or a profile writes one: whole, or with a
+    /// fraction. Reading only whole numbers skipped every sample that carried
+    /// a fraction as though it were missing a figure.
+    static func percentage(_ value: Any?) -> Int? {
+        switch value {
+        case let number as Int: return number
+        case let number as Double: return Int(number.rounded())
+        default: return nil
+        }
+    }
+
     private static func parseUsage(at url: URL) -> Usage? {
         guard let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = root["samples"] as? [[String: Any]]
         else { return nil }
 
-        // The week is what every plan has, so a sample is usable once it
-        // carries that. Demanding the five-hour figure as well left a profile
-        // on a plan without one reporting the last sample from before it
-        // changed plans, days old, with that Claude open and writing.
         var samples: [UsageSample] = []
         samples.reserveCapacity(raw.count)
         for sample in raw {
@@ -2340,25 +2344,26 @@ enum Graft {
             samples.append((Date(timeIntervalSince1970: stamp / 1000), percentage(values["fh"]),
                             week, sample["org"] as? String))
         }
-        guard let latest = samples.last else { return nil }
+        guard let newest = samples.last else { return nil }
 
-        // Claude has been seen to leave the five-hour figure out of a sample
-        // now and then, so the one just before stands in for it — but only
-        // from within the same five hours, or a plan that no longer has the
-        // window would go on showing the last figure it had for ever.
-        let fiveHours = samples.compactMap { sample in
-            sample.fiveHour.map { (time: sample.time, used: $0) }
+        if hasNoFiveHourLimit(samples) {
+            return Usage(fiveHour: nil,
+                         week: newest.week,
+                         organization: newest.org,
+                         sampled: newest.time,
+                         weekReset: weekReset(from: samples))
         }
-        let fiveHour = fiveHours.last.flatMap {
-            latest.time.timeIntervalSince($0.time) < fiveHourWindow ? $0.used : nil
-        }
-
-        return Usage(fiveHour: fiveHour,
+        // A limited account's sample without the figure is a gap rather than
+        // an empty window. Read as zero it dropped the bar to nothing, and the
+        // zero then passed for the window reopening, moving its reset.
+        let complete = samples.filter { $0.fiveHour != nil }
+        guard let latest = complete.last(where: { $0.org == newest.org }) else { return nil }
+        return Usage(fiveHour: latest.fiveHour,
                      week: latest.week,
                      organization: latest.org,
                      sampled: latest.time,
-                     fiveHourReset: fiveHour == nil ? nil : fiveHourReset(from: fiveHours),
-                     weekReset: weekReset(from: samples))
+                     fiveHourReset: fiveHourReset(from: complete),
+                     weekReset: weekReset(from: complete))
     }
 
     private typealias UsageSample = (time: Date, fiveHour: Int?, week: Int, org: String?)
@@ -2366,13 +2371,30 @@ enum Graft {
     private static let fiveHourWindow: TimeInterval = 5 * 60 * 60
     private static let weekWindow: TimeInterval = 7 * 24 * 60 * 60
 
+    /// Since November 2026 an account with no five-hour limit leaves `fh` out
+    /// of every sample, while a limited one still writes it on each, a zero
+    /// included. Taking a limited account for one without costs it its
+    /// five-hour bar and its Start Session, so one sample without the figure
+    /// is not enough: the account must have left it out twice running, and
+    /// written none in the five hours before. Only that account's own samples
+    /// count, so one signed in after another is not judged by what the other
+    /// wrote.
+    private static func hasNoFiveHourLimit(_ samples: [UsageSample]) -> Bool {
+        guard let newest = samples.last, newest.fiveHour == nil else { return false }
+        let own = samples.filter { $0.org == newest.org }
+        if own.count > 1, own[own.count - 2].fiveHour != nil { return false }
+        return !own.contains {
+            $0.fiveHour != nil && newest.time.timeIntervalSince($0.time) < fiveHourWindow
+        }
+    }
+
     /// The window opened at the first sample after the figure was last zero,
     /// and closes five hours later. Nothing to report when none is open, or
     /// when the history starts partway through one.
-    private static func fiveHourReset(from samples: [(time: Date, used: Int)]) -> Date? {
-        guard let latest = samples.last, latest.used > 0 else { return nil }
+    private static func fiveHourReset(from samples: [UsageSample]) -> Date? {
+        guard let latest = samples.last, let used = latest.fiveHour, used > 0 else { return nil }
         for index in stride(from: samples.count - 1, to: 0, by: -1)
-        where samples[index - 1].used == 0 && samples[index].used > 0 {
+        where samples[index - 1].fiveHour == 0 && (samples[index].fiveHour ?? 0) > 0 {
             let reset = samples[index].time.addingTimeInterval(fiveHourWindow)
             return reset > Date() ? reset : nil
         }
@@ -3526,6 +3548,9 @@ enum Graft {
                 return processIdentifier(of: profile).map { reveal(pid: $0) } ?? false
             }
             SidebarSync.synchronize(beforeOpening: profile)
+            PoolEnvironment.settle(beforeOpening: profile) {
+                PoolEnvironment.ensureRelay(PoolEnvironment.readJournal().relay)
+            }
             return runTool("/usr/bin/open", launchArguments(for: profile, inBackground: inBackground)) == 0
         }
     }

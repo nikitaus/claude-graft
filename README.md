@@ -8,39 +8,45 @@
 
 This is a personal fork of [Claude Graft](https://github.com/aaditya-v-more/claude-graft),
 the macOS app that runs several Claude Desktop logins side by side. It is built
-on the original's 1.1.8 release, and what the app does and how it works is
-described there. This page covers only what is different here.
+on the original's 2.0.1 release, with everything that release brought: shared
+usage across accounts for Claude Code, the Artifacts, Projects and Search Chats
+panes, the redesigned window and the conversation on screen in the menu bar.
+What the app does and how it works is described there. This page covers only
+what is different here.
 
 ## What is different
 
-**Usage for plans without a five-hour window.** Ultra is spent against the week
-alone, with Fable allowed a share of it. The original requires a five-hour
-figure in Anthropic's usage answer and refuses any answer that lacks one, so an
-Ultra account reads "the usage service sent something unexpected" and falls back
-to figures its profile recorded days or weeks earlier. Here either window is
-enough: such an account shows its week and its Fable share live from Anthropic,
-with no five-hour bar, and the number in the menu bar is the week. The profile's
-own record is read the same way, a figure written with a fraction is no longer
-skipped as missing, and should the weekly window stop being sent the same figure
-is taken from the newer list of limits in the answer.
-
-**It says why a figure is not live.** The original shows "Anthropic's usage
-service did not answer" for every failure but a locked keychain, including a
-saved login that has run out, when no request was made at all. Here the line
-under each account names what happened: a login that has expired, one Anthropic
-refused, a rate limit, an answer that could not be read, or no answer. A login
-that failed before anything was sent is checked again on the next pass rather
-than minutes later, and each failure is written once to `diagnostics.log` in
-`~/Library/Application Support/ClaudeGraft/`, with the status code or, for a
-login, each saved entry's expiry and permissions but never the token itself.
-
 **Updates come from this fork.** Builds here check this repository's own update
 feed and accept only releases signed with this fork's key, so a release of the
-original project never replaces them. Version numbers have four parts, starting
-at 1.1.8.1, so that none can be confused with an original release; that matters
-because a shortcut refreshes its launcher only when the number changes. The
-feed is the appcast file on `main`, read straight from the repository, so the
-fork keeps no website.
+original project never replaces them. A version number is the original release
+it is built on with a fourth part added, so 2.0.1.1 is the original's 2.0.1
+with this fork's changes, and none can be confused with an original release;
+that matters because a shortcut refreshes its launcher only when the number
+changes. The feed is the appcast file on `main`, read straight from the
+repository, so the fork keeps no website. In the app, What's New and Report a
+Problem open this repository's releases and issues, while the rest of the Help
+menu still credits the original project and its author.
+
+**A figure that is not live says why, in more cases.** The original names a
+login that could not be read, but shows "Anthropic didn't answer" for anything
+the service sent back. Here a refused login says to open that Claude, a rate
+limit and an answer that could not be read each say what they are, and the
+service not answering is kept for when it did not. Each failure is written once
+to `diagnostics.log` in `~/Library/Application Support/ClaudeGraft/`, with the
+status code, the shape of an answer that could not be read without its values,
+or, for a login, each saved entry's expiry and permissions but never the token.
+
+**Usage reads a little more of what Anthropic sends.** Should the weekly window
+stop being sent, the same figure is taken from the newer list of limits in the
+answer; a reset written to the microsecond is read rather than dropped; and a
+figure written with a fraction is no longer skipped as missing, in the answer or
+in a profile's own record.
+
+**The last live figure survives a restart.** The original keeps Anthropic's
+last answer for each account only while it runs, so after an update, a login or
+a relaunch an account could fall back to the figure its profile recorded itself,
+hours old, if Anthropic was rate-limiting just then. Here it is kept on disk and
+shown with the time it was really taken until a new one arrives.
 
 ## Install
 

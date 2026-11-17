@@ -30,6 +30,10 @@ clones the tap into `dist/`, rewrites the cask against the checksum of the disk
 image that run actually built, commits it, and names the push beside the other
 two. Nothing here pushes, as before; what changed is that no number is carried
 across by hand and the printed instructions are no longer half a publish.
+Every run deletes that clone and takes a fresh one, so a change to the rest of
+the cask — 2.0.1's uninstall step, which takes the sharing lines out of each
+closed Claude — is committed on top after the run and pushed with it, or the
+next run quietly drops it.
 
 **A release carries both architectures.** `build.sh` compiles one slice per
 architecture and `lipo`s them; a plain `./build.sh` stays single-slice because a
@@ -45,17 +49,13 @@ to tell them apart. Opening the wrong one gives two instances polling the same
 profiles, racing for the same keychain prompt, and a Sparkle that updates a
 bundle nobody installed. Seen for real, which is why the directory was renamed.
 
-**A machine with only the Command Line Tools cannot build against the macOS 27
-SDK.** That SDK declares `@State` as a macro implemented in `SwiftUIMacros`, and
-the tools carry no implementation for it: with Swift 6.4.2 and nothing but
-`/Library/Developer/CommandLineTools`, every view holding state failed with
-"plugin for module 'SwiftUIMacros' not found", followed by a "'self' is
-immutable" for each assignment to one. `./test.sh` passes on the same machine,
-because the suite compiles no views, so a green suite says nothing about
-whether the app builds. Nothing here needs an API newer than macOS 13, and
-building against the older SDK the tools ship beside it works:
-
-    SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
+**The Command Line Tools' default SDK cannot build the app.** With only the
+Command Line Tools installed, the macOS 27 SDK they default to cannot expand
+SwiftUI's `@State` — the compiler reports that the plugin for `SwiftUIMacros`
+was not found — so anything that compiles the app fails in `SettingsView`
+before it reaches a line of this project. The 26.5 SDK beside it works:
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` in front of
+any of the commands.
 
 ## Claude Desktop's own updates
 
@@ -271,12 +271,25 @@ shows a scheduled update alert immediately but, in its own words, "behind other
 running applications" — and that is a delay, not a silent merge, which is the
 half that matters.
 
-The release the floor names has to bring a note, and `release.sh` refuses to
-build it otherwise: it is the one release that puts a dialog in front of
-somebody, and a dialog with nothing in it is worse than no dialog. Notes live in
+Every release has to bring a note, and that note has to say what upgrading from
+1.0.x does; `release.sh` refuses to build one without both. This used to be
+asked of 1.1.0 alone, on the reasoning that it was the one release putting a
+dialog in front of somebody. It is not. Sparkle offers a 1.0.x machine the
+newest entry in the feed, not the one the floor names, and the dialog it puts
+up carries that entry's notes — so from a 1.0.11 Mac every release since 1.1.0
+has been the one that stops to ask, and 1.1.7, 1.1.8 and 2.0.0 asked with notes
+that never mentioned the merge the question exists for. A note with nothing to
+say about 1.0.x is as good as no note in that dialog. The check looks for
+"from 1.0.x", which both headings used so far carry: "Upgrading from 1.0.x"
+and "Coming from 1.0.x?". Notes live in
 `docs/release-notes/<version>.html` and are copied beside the archive, which is
 where `generate_appcast` looks for them; carrying no DOCTYPE or body tags is what
 makes them embed rather than become a link to somewhere that has to stay up.
+
+This fork's `release.sh` does not ask for that. No copy polling this fork's feed
+was ever on 1.0.x — the first one built here was 1.1.8.1 — so the dialog the
+paragraph above is about is never put in front of anybody who reads it, and only
+the release the floor is set at needs a note of its own.
 
 **The feed keeps every release it has ever carried.** `generate_appcast` prunes
 to a handful of entries per branch point unless told otherwise, so each release
@@ -287,6 +300,25 @@ again, so a dropped entry cannot be regenerated, only recovered out of git.
 `release.sh` passes `--maximum-versions 0` and checks the count went up by
 exactly one; the old check was "no fewer than before", which adding one and
 losing one satisfies perfectly.
+
+**The new entry is checked on its own, and the live feed changes last.** The
+signature check used to search the whole file for `sparkle:edSignature`, and
+every older entry carries one, so it passed whether or not the new entry was
+signed — the exact silent failure it was written for, when the key found does
+not match `SUPublicEDKey`. `release.sh` now cuts out the `<item>` naming this
+version's zip and asks that one for a signature, a `length` equal to the zip it
+built, and the floor; it also counts signatures across the file, one more than
+before, for a pass that lost an old one. All of this used to happen in
+`docs/appcast.xml` itself, so a run that stopped at a check, or at the cask
+after it, left the live file offering a release with no archive uploaded and no
+tag, one `git add docs` away from being served. The feed is built and checked in
+`dist/sparkle/appcast.xml` and copied into `docs/` as the last step before
+`--install`.
+
+This fork's `release.sh` checks the new entry by the line naming its zip, which
+is where the signature sits, and still writes `docs/appcast.xml` in place. The
+release runs in CI, and a run that stops commits nothing, so the live feed stays
+the one on main until a run reaches the end.
 
 **The feed URL is unchangeable once shipped.** A copy out in the world polls the
 URL it was born with, and GitHub gives Pages no redirect if the account is ever

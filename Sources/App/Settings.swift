@@ -30,8 +30,8 @@ import ServiceManagement
 /// whether a screen contains the whole item rejects every item there is.
 ///
 /// The notch is the other place an item goes unseen, and it is inside the
-/// screen. A wider title put Graft's item at x 866–1054 on a MacBook Air whose
-/// notch covers 751–959. The item was on the screen by every
+/// screen. A new conversation's text widened Graft's item to x 866–1054 on a
+/// MacBook Air whose notch covers 751–959. The item was on the screen by every
 /// other measure, but behind the notch, where no pointer reaches it. So any
 /// overlap with a notch counts as out of reach.
 enum MenuBarPlacement {

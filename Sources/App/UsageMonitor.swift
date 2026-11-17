@@ -66,6 +66,14 @@ final class UsageMonitor: ObservableObject {
             guard let usage, isLive || !usage.isStale else { return nil }
             return usage
         }
+
+        /// Start Session opens a five-hour window, and an account without one
+        /// has nothing for it to open. Before any figure has come in, whether
+        /// it has one is not known yet, and the button stays.
+        var mayStartSession: Bool {
+            guard let usage else { return true }
+            return usage.fiveHour != nil
+        }
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -273,6 +281,17 @@ final class UsageMonitor: ObservableObject {
         return backoffSteps[index]
     }
 
+    /// Who may raise the keychain dialog for one profile in a pass. Once the
+    /// keychain has said no in this pass, nobody: the key is one item for
+    /// every profile, so each profile after a Deny was another dialog asking
+    /// the same question, three of them for one press on a Mac with three
+    /// Claudes.
+    static func prompting(asking: ClaudeCredentials.Prompting,
+                          elsewhere: ClaudeCredentials.Prompting,
+                          focused: Bool, locked: Bool) -> ClaudeCredentials.Prompting {
+        locked ? .no : (focused ? asking : elsewhere)
+    }
+
     /// `Retry-After` is the one wait a user's own refresh cannot shorten.
     static func mayAttempt(now: Date, until: Date?, interactive: Bool, serverAsked: Bool) -> Bool {
         guard let until else { return true }
@@ -286,14 +305,18 @@ final class UsageMonitor: ObservableObject {
     /// sitting at its limit should not shout over the one actually in use.
     /// With nothing open there is no such answer, so it falls back to whichever
     /// is closest to its limit.
+    ///
+    /// Each is weighed by the figure the bar would show for it. Weighed by the
+    /// five-hour window alone, an account without one counted as zero and
+    /// lost to every other account, however little of its week was left.
     var headlineEntry: Entry? {
         let usable = entries.filter { $0.currentUsage != nil }
         let running = usable.filter(\.isRunning)
         let pool = running.isEmpty ? usable : running
-        return pool.max { ($0.usage?.headline ?? 0) < ($1.usage?.headline ?? 0) }
+        return pool.max { ($0.usage?.headline.percent ?? 0) < ($1.usage?.headline.percent ?? 0) }
     }
 
-    var headline: Int? { headlineEntry?.usage?.headline }
+    var headline: Graft.Usage.Headline? { headlineEntry?.usage?.headline }
 
     /// The account the menu bar is about, and whether it is named there.
     ///
@@ -435,12 +458,14 @@ final class UsageMonitor: ObservableObject {
                     entry.isLive = true
                     entry.plan = live.plan
                     entry.refreshed = fetched
+                    // One line, and the time the figure is from: a fallback
+                    // read as a figure taken now is what this note is for.
                     entry.note = outcome.failure.map {
-                        L10n.format("%@ Showing the last figure Anthropic gave.", $0)
+                        L10n.format("%@ · figure from %@", $0, Self.clock(fetched))
                     }
-                } else if onDisk != nil {
+                } else if let onDisk {
                     entry.note = outcome.failure.map {
-                        L10n.format("%@ Showing what this profile last recorded itself.", $0)
+                        L10n.format("%@ · own record from %@", $0, Self.clock(onDisk.sampled))
                     }
                 } else {
                     entry.note = outcome.failure
@@ -489,7 +514,11 @@ final class UsageMonitor: ObservableObject {
             if let refreshed = entry.refreshed { row["refreshedAt"] = stamp.string(from: refreshed) }
             if let note = entry.note { row["note"] = note }
             if let usage = entry.usage {
-                if let fiveHour = usage.fiveHour { row["fiveHour"] = fiveHour }
+                if let fiveHour = usage.fiveHour {
+                    row["fiveHour"] = fiveHour
+                } else {
+                    row["noFiveHourLimit"] = true
+                }
                 row["week"] = usage.week
                 if let reset = usage.fiveHourReset { row["fiveHourReset"] = stamp.string(from: reset) }
                 if let reset = usage.weekReset { row["weekReset"] = stamp.string(from: reset) }
@@ -555,15 +584,15 @@ final class UsageMonitor: ObservableObject {
                               serverAsked: serverAskedToWait.contains(profile.path))
         else {
             if interactive { problem = waitingMessage(until: waiting?.until) }
-            let why = [lastFailure[profile.path], waitingMessage(until: waiting?.until)]
-                .compactMap { $0 }.joined(separator: " ")
+            let why = [lastFailure[profile.path], waitingMessage(until: waiting?.until, inLine: true)]
+                .compactMap { $0 }.joined(separator: " · ")
             return LiveOutcome(reading: cached?.reading, fetched: cached?.fetched, failure: why)
         }
 
         do {
             guard let token = try ClaudeCredentials.token(for: profile, prompting: prompting)
             else {
-                return LiveOutcome(failure: L10n.text("This profile has no saved login to ask Anthropic with."))
+                return LiveOutcome(failure: L10n.text("No saved login to ask Anthropic with"))
             }
             // The key is the process's from here on, so nothing after this
             // in the pass is shut out.
@@ -582,8 +611,7 @@ final class UsageMonitor: ObservableObject {
             // line. The row itself always says, quietly. The keychain being
             // shut is worth surfacing either way, since it is one click to fix
             // and everything live depends on it.
-            let keychain = Self.isKeychainFailure(error)
-            let why = Self.failureNote(for: error)
+            let why = Self.failureLine(error)
             // Once per change rather than once per pass: a login that has run
             // out fails on every tick, and the log is for the moment it began.
             if lastFailure[profile.path] != why {
@@ -591,6 +619,7 @@ final class UsageMonitor: ObservableObject {
                                                   "reason": Self.reasonCode(error)])
             }
             lastFailure[profile.path] = why
+            let keychain = Self.isKeychainFailure(error)
             // After a Deny the profiles after it are read silently and fail
             // the same way; their "choose Always Allow" would bury the answer
             // the person just gave.
@@ -598,7 +627,11 @@ final class UsageMonitor: ObservableObject {
                 problem = (error as? LocalizedError)?.errorDescription
             }
             if keychain { locked = true }
-            guard Self.backsOff(after: error) else {
+
+            // A login that cannot be read here is put right on this Mac, and
+            // the next pass is the first to see it put right. Waiting longer
+            // between tries only kept the account stale for half an hour after.
+            guard Self.cameFromService(error) else {
                 return LiveOutcome(reading: cached?.reading, fetched: cached?.fetched, failure: why)
             }
 
@@ -618,38 +651,8 @@ final class UsageMonitor: ObservableObject {
         }
     }
 
-    /// What the row says when its figure could not be had live.
-    ///
-    /// Every failure but a shut keychain used to read "did not answer",
-    /// including the ones where nothing was sent at all — a login that had run
-    /// out, or one without the scope usage needs. Both accounts on the machine
-    /// this was reported from said it, so the one sentence that pointed at the
-    /// fix, whether to open the profile or to wait out a rate limit, was the
-    /// one thing the row left out.
-    static func failureNote(for error: Error) -> String {
-        let fallback = L10n.text("Anthropic's usage service did not answer.")
-        switch error {
-        case ClaudeCredentials.Failure.noKeychainAccess,
-             ClaudeCredentials.Failure.keychainDeclined:
-            return L10n.text("Live usage needs keychain access.")
-        case let failure as ClaudeCredentials.Failure:
-            return failure.errorDescription ?? fallback
-        case let failure as UsageAPI.Failure:
-            return failure.errorDescription ?? fallback
-        default:
-            return fallback
-        }
-    }
-
-    /// A failure that happened before anything was sent has nothing to be
-    /// patient with. The next pass reads the profile's login again for the
-    /// cost of a file and finds the renewed one the moment Claude writes it;
-    /// waiting minutes first only put that off. Everything `ClaudeCredentials`
-    /// throws is such a failure, a shut keychain included: the next pass reads
-    /// it silently, so retrying raises no dialog.
-    static func backsOff(after error: Error) -> Bool {
-        !(error is ClaudeCredentials.Failure)
-    }
+    /// Paths the service itself asked us to leave alone for a while.
+    private var serverAskedToWait: Set<String> = []
 
     /// The `Retry-After` a failure carried, if the service sent one.
     static func waitAsked(by error: Error) -> TimeInterval? {
@@ -662,15 +665,41 @@ final class UsageMonitor: ObservableObject {
         return failure == .noKeychainAccess || failure == .keychainDeclined
     }
 
-    /// Who may raise the keychain dialog for one profile in a pass. Once the
-    /// keychain has said no in this pass, nobody: the key is one item for
-    /// every profile, so each profile after a Deny was another dialog asking
-    /// the same question, three of them for one press on a Mac with three
-    /// Claudes.
-    static func prompting(asking: ClaudeCredentials.Prompting,
-                          elsewhere: ClaudeCredentials.Prompting,
-                          focused: Bool, locked: Bool) -> ClaudeCredentials.Prompting {
-        locked ? .no : (focused ? asking : elsewhere)
+    /// Only an answer, or no answer, from the service is a reason to back off.
+    /// Everything `ClaudeCredentials` throws happened before anything was sent.
+    static func cameFromService(_ error: Error) -> Bool {
+        !(error is ClaudeCredentials.Failure)
+    }
+
+    /// The row's word for why its figure is not live. Every failure used to
+    /// read "Anthropic didn't answer", which sent someone with an expired login
+    /// to look at their network.
+    static func failureLine(_ error: Error) -> String {
+        switch error as? ClaudeCredentials.Failure {
+        case .noKeychainAccess?, .keychainDeclined?:
+            return L10n.text("Live usage needs keychain access")
+        case .expired?:
+            return L10n.text("Login expired · open that Claude to renew it")
+        case .notSignedIn?:
+            return L10n.text("Its login could not be read on this Mac")
+        case .configUnreadable?:
+            return L10n.text("Its settings were being saved · trying again")
+        case nil:
+            break
+        }
+        // An answer is not the absence of one. A refused login read "didn't
+        // answer" and sent its owner to look at the network, when opening that
+        // Claude was the fix, and a rate limit read the same as an outage.
+        switch error as? UsageAPI.Failure {
+        case .http(401, _)?, .http(403, _)?:
+            return L10n.text("Login refused · open that Claude to renew it")
+        case .http(429, _)?:
+            return L10n.text("Anthropic is rate-limiting · trying again later")
+        case .unreadable?:
+            return L10n.text("Anthropic sent something unexpected")
+        default:
+            return L10n.text("Anthropic didn't answer")
+        }
     }
 
     /// The failure as the log records it: short enough to grep for, and
@@ -689,13 +718,17 @@ final class UsageMonitor: ObservableObject {
         }
     }
 
-    /// Paths the service itself asked us to leave alone for a while.
-    private var serverAskedToWait: Set<String> = []
-
-    private func waitingMessage(until: Date?) -> String {
+    private func waitingMessage(until: Date?, inLine: Bool = false) -> String {
         guard let until, let remaining = Graft.countdown(to: until) else {
-            return L10n.text("Waiting before asking for usage again.")
+            return L10n.text(inLine ? "next try soon" : "Next try soon")
         }
-        return L10n.format("Waiting %@ before asking for usage again.", remaining)
+        return L10n.format(inLine ? "next try in %@" : "Next try in %@", remaining)
+    }
+
+    /// The time alone for today, with the day for anything older.
+    static func clock(_ date: Date, now: Date = Date()) -> String {
+        Calendar.current.isDate(date, inSameDayAs: now)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(date: .abbreviated, time: .shortened)
     }
 }

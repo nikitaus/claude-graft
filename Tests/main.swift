@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 // Every test runs against a throwaway Application Support and Applications
@@ -958,6 +959,14 @@ func writeUsage(_ profile: URL, _ samples: [(Double, Int, Int)]) {
     try! data.write(to: profile.appending(path: "plan-usage-history.json"))
 }
 
+/// Samples exactly as Claude writes them, for the ones `writeUsage` cannot
+/// spell: a sample without `fh`, or one from another organization.
+func writeSamples(_ profile: URL, _ samples: [[String: Any]]) {
+    let payload: [String: Any] = ["version": 2, "samples": samples]
+    try! JSONSerialization.data(withJSONObject: payload)
+        .write(to: profile.appending(path: "plan-usage-history.json"))
+}
+
 do {
     let profile = makeProfile("Claude-Usage", account: "AAAA", org: "ORG1")
     check(Graft.usage(of: profile) == nil, "a profile with no history reports nothing")
@@ -974,33 +983,61 @@ do {
     check(Graft.usage(of: profile)?.isStale == true,
           "a sample older than the five-hour window is stale")
 
-    func writeSamples(_ samples: [[String: Any]]) {
-        try! JSONSerialization.data(withJSONObject: ["version": 2, "samples": samples] as [String: Any])
-            .write(to: profile.appending(path: "plan-usage-history.json"))
-    }
+    // What an account with no five-hour limit has written since November 2026,
+    // after complete samples from before: `{"sd": 94}`, with no `fh` at all.
+    let hour = 3_600_000.0
+    writeSamples(profile, [["t": now - 8 * 24 * hour, "org": "ORG1", "u": ["fh": 50, "sd": 55]],
+                           ["t": now - 2 * hour, "org": "ORG1", "u": ["sd": 93]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 94]]])
+    let unlimited = Graft.usage(of: profile)
+    check(unlimited.map { $0.fiveHour == nil } == true,
+          "an account that has stopped writing the five-hour figure has no five-hour limit")
+    check(unlimited.map { $0.week == 94 && !$0.isStale && $0.fiveHourReset == nil } == true,
+          "and its newest weekly figure is the one reported, with no five-hour reset to count down to")
+    check(unlimited?.headline == Graft.Usage.Headline(percent: 94, isWeekly: true),
+          "and its week is the figure it gives the menu bar")
 
-    // Claude has been seen to write samples with a missing figure.
-    writeSamples([["t": now - 1000, "org": "ORG1", "u": ["fh": 7, "sd": 8]],
-                  ["t": now, "org": "ORG1", "u": ["sd": 5]]])
-    check(Graft.usage(of: profile)?.fiveHour == 7,
-          "a sample missing the five-hour figure keeps the one recorded just before it")
-    check(Graft.usage(of: profile)?.week == 5, "while the week comes from the newest sample")
+    writeSamples(profile, [["t": now, "org": "ORG1", "u": ["sd": 3]]])
+    check(Graft.usage(of: profile).map { $0.fiveHour == nil && $0.week == 3 } == true,
+          "so has an account whose whole history is without it")
 
-    // Ultra is spent against the week alone. Requiring both figures left a
-    // profile on it reporting the last sample from before the plan changed,
-    // days old, with that Claude open and writing.
-    writeSamples([["t": now - 4 * 24 * 3_600_000, "org": "ORG1", "u": ["fh": 5, "sd": 60]],
-                  ["t": now, "org": "ORG1", "u": ["fh": NSNull(), "sd": 11]]])
-    let weekOnly = Graft.usage(of: profile)
-    check(weekOnly?.week == 11, "a history that records the week alone is read up to its newest sample")
-    check(weekOnly != nil && weekOnly?.fiveHour == nil,
-          "with no five-hour figure carried over from days before")
-    check(weekOnly != nil && weekOnly?.fiveHourReset == nil, "nor a five-hour reset to count down to")
-    check(weekOnly?.headline == 11, "and the week is the figure it leads with")
+    writeUsage(profile, [(now - hour, 0, 40), (now, 0, 41)])
+    check(Graft.usage(of: profile)?.fiveHour == 0,
+          "a limited account with nothing spent reads zero, keeping its limit")
+    check(Graft.usage(of: profile)?.headline == Graft.Usage.Headline(percent: 0, isWeekly: false),
+          "and still gives the menu bar its five-hour figure")
 
-    writeSamples([["t": now, "org": "ORG1", "u": ["fh": 5.4, "sd": 11.6]]])
-    check(Graft.usage(of: profile)?.fiveHour == 5 && Graft.usage(of: profile)?.week == 12,
-          "a figure written with a fraction is read rather than skipped")
+    writeSamples(profile, [["t": now - 2 * hour, "org": "ORG1", "u": ["fh": 30, "sd": 40]],
+                           ["t": now - hour, "org": "ORG1", "u": ["fh": 35, "sd": 41]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 42]]])
+    let gap = Graft.usage(of: profile)
+    check(gap?.fiveHour == 35 && gap?.week == 41,
+          "a limited account's sample without the figure is a gap, and the last complete one stands")
+    check(gap.map { abs($0.sampled.timeIntervalSince1970 * 1000 - (now - hour)) < 1 } == true,
+          "dated by when that one was taken")
+
+    writeSamples(profile, [["t": now - 3 * hour, "org": "ORG1", "u": ["fh": 30, "sd": 40]],
+                           ["t": now - hour, "org": "ORG1", "u": ["sd": 41]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 42]]])
+    check(Graft.usage(of: profile)?.fiveHour == 30,
+          "nor do two such samples end the limit while the figure was written in the five hours before")
+
+    writeSamples(profile, [["t": now - 30 * hour, "org": "ORG1", "u": ["fh": 20, "sd": 40]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 42]]])
+    check(Graft.usage(of: profile)?.fiveHour == 20,
+          "and one on its own after a long silence is not enough to call the limit gone")
+
+    writeSamples(profile, [["t": now - 2 * hour, "org": "ORG2", "u": ["fh": 60, "sd": 70]],
+                           ["t": now - hour, "org": "ORG1", "u": ["sd": 20]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 21]]])
+    check(Graft.usage(of: profile).map { $0.fiveHour == nil && $0.week == 21 && $0.organization == "ORG1" } == true,
+          "an account signed in after a limited one is judged by its own samples alone")
+
+    writeSamples(profile, [["t": now - 2 * hour, "org": "ORG1", "u": ["sd": 20]],
+                           ["t": now - hour, "org": "ORG2", "u": ["fh": 60, "sd": 70]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 21]]])
+    check(Graft.usage(of: profile).map { $0.fiveHour == nil && $0.organization == "ORG1" } == true,
+          "including when the other account's sample comes between its own")
 
     try! Data("not json".utf8).write(to: profile.appending(path: "plan-usage-history.json"))
     check(Graft.usage(of: profile) == nil, "a corrupt history is ignored rather than fatal")
@@ -1016,6 +1053,10 @@ do {
     try! JSONSerialization.data(withJSONObject: empty)
         .write(to: profile.appending(path: "plan-usage-history.json"))
     check(Graft.usage(of: profile) == nil, "so is an empty one")
+
+    writeSamples(profile, [["t": now, "org": "ORG1", "u": ["fh": 5.4, "sd": 11.6]]])
+    check(Graft.usage(of: profile)?.fiveHour == 5 && Graft.usage(of: profile)?.week == 12,
+          "a figure written with a fraction is read rather than skipped")
 }
 
 do {
@@ -1076,7 +1117,7 @@ do {
         settled.isRunning = false
         return settled
     })
-    check(monitor.headline == 77, "the headline comes from the figures a refresh read off disk")
+    check(monitor.headline?.percent == 77, "the headline comes from the figures a refresh read off disk")
 
     // One account, one figure. The two windows used to read the history file
     // for themselves while the menu bar showed what the endpoint had just said,
@@ -1100,6 +1141,8 @@ do {
               "\(view) does not go back to the history file behind it")
         check(source.contains("usage.invalidate("),
               "\(view) drops the reading its own Start Session has just made wrong")
+        check(source.contains("plan?.mayStartSession"),
+              "\(view) offers no Start Session to an account with no five-hour window to open")
     }
 
     // A figure says when it was taken and where from. The profile's own
@@ -1137,7 +1180,37 @@ do {
     let second = UsageMonitor()
     second.refresh(store)
     settle(second, expecting: 2)
-    check(second.headline == 12, "a stale figure is left out of the headline")
+    check(second.headline?.percent == 12, "a stale figure is left out of the headline")
+}
+
+do {
+    // An account with no five-hour limit, in the shape its own record has had
+    // since November 2026.
+    let now = Date().timeIntervalSince1970 * 1000
+    let unlimited = makeProfile("Claude-Unlimited", account: "CCCC", org: "ORG3")
+    writeSamples(unlimited, [["t": now - 60_000, "org": "ORG3", "u": ["sd": 93]],
+                             ["t": now, "org": "ORG3", "u": ["sd": 94]]])
+    let store = ShortcutStore()
+    var shortcut = Shortcut(name: "Unlimited", folder: "Claude-Unlimited", source: .main)
+    shortcut.installedName = "Unlimited"
+    store.shortcuts = [shortcut]
+
+    let monitor = UsageMonitor()
+    monitor.refresh(store)
+    settle(monitor, expecting: 2)
+    let entry = monitor.entry(for: unlimited)
+    check(entry?.usage.map { $0.fiveHour == nil && $0.week == 94 } == true,
+          "the monitor carries an account's missing five-hour limit through from its record")
+    check(entry?.mayStartSession == false,
+          "and offers that account no session, since there is no window for one to open")
+    check(UsageMonitor.Entry(name: "New", profile: unlimited, usage: nil, isRunning: false).mayStartSession,
+          "while an account nobody has answered for yet keeps the button")
+
+    let status = (try? Data(contentsOf: UsageMonitor.statusFile))
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    let row = (status?["profiles"] as? [[String: Any]])?.first { $0["name"] as? String == "Unlimited" }
+    check(row?["noFiveHourLimit"] as? Bool == true && row?["fiveHour"] == nil && row?["week"] as? Int == 94,
+          "the status file says the account has no five-hour limit rather than recording a zero")
 }
 
 section("Preferences")
@@ -1207,6 +1280,16 @@ do {
     check(Graft.usage(of: profile)?.fiveHourReset == nil,
           "nor when the history never saw the window open")
 
+    // Read as zero, a sample without the figure looked like the window closing
+    // and the next one like it opening again, an hour and a half late.
+    writeSamples(profile, [["t": now - 3 * hour, "org": "ORG1", "u": ["fh": 0, "sd": 40]],
+                           ["t": now - 2 * hour, "org": "ORG1", "u": ["fh": 5, "sd": 41]],
+                           ["t": now - hour, "org": "ORG1", "u": ["sd": 42]],
+                           ["t": now - 0.5 * hour, "org": "ORG1", "u": ["fh": 30, "sd": 45]]])
+    let across = Graft.usage(of: profile)?.fiveHourReset?.timeIntervalSinceNow ?? 0
+    check(across > 2.9 * 3600 && across < 3.1 * 3600,
+          "a sample without the five-hour figure does not move when a limited account's window closes")
+
     // Weekly resets roll forward across stretches Claude was not running.
     let day = 24 * hour
     writeUsage(profile, [(now - 20 * day, 0, 60), (now - 19.9 * day, 0, 2), (now, 10, 30)])
@@ -1215,6 +1298,13 @@ do {
     check(week.map { $0 > Date() } == true, "and it is always in the future")
     check(week.map { $0.timeIntervalSinceNow < 7 * 24 * 3600 } == true,
           "within one cycle, however long ago it was seen")
+
+    writeSamples(profile, [["t": now - 20 * day, "org": "ORG1", "u": ["fh": 0, "sd": 60]],
+                           ["t": now - 19.9 * day, "org": "ORG1", "u": ["sd": 2]],
+                           ["t": now, "org": "ORG1", "u": ["sd": 30]]])
+    let unlimited = Graft.usage(of: profile)
+    check(unlimited.map { $0.fiveHour == nil && $0.weekReset.map { $0 > Date() } == true } == true,
+          "an account with no five-hour limit still has its weekly reset worked out")
 }
 
 section("Countdown wording")
@@ -1272,32 +1362,36 @@ do {
     let expected = ISO8601DateFormatter().date(from: "2026-08-24T09:30:00Z")
     check(reading?.fiveHourReset == expected, "the reset time is exactly what was sent")
 
-    // Ultra has no five-hour window, and refusing an answer without one is
-    // what put "the usage service sent something unexpected" under every
-    // account on that plan.
-    let ultraBody: [String: Any] = [
+    // The answer an account with no five-hour limit gets since November 2026.
+    let weekOnly = UsageAPI.reading(from: [
         "five_hour": NSNull(),
-        "seven_day": ["utilization": 11, "resets_at": "2026-11-11T21:00:00Z"],
-        "limits": [[
-            "kind": "weekly_scoped",
-            "percent": 0,
-            "resets_at": "2026-11-11T21:00:00Z",
-            "scope": ["model": ["display_name": "Fable"]],
-        ]],
-        "subscription_type": "ultra",
-    ]
-    let ultra = UsageAPI.reading(from: ultraBody)
-    check(ultra?.week == 11, "a plan with no five-hour window is read for its week rather than refused")
-    check(ultra != nil && ultra?.fiveHour == nil,
-          "and is not given a five-hour figure it was never sent")
-    check(ultra?.weekReset != nil, "its weekly reset comes through")
-    check(ultra?.fable == 0, "its Fable share is read beside it")
-    check(ultra?.plan == "Ultra", "and the plan is named")
-    check(UsageAPI.reading(from: ["seven_day": ["utilization": 10]])?.week == 10,
-          "a five-hour window left out altogether reads the same as one sent as null")
-    check(UsageAPI.reading(from: [:]) == nil, "an answer carrying neither window is still refused")
-    check(UsageAPI.reading(from: ["limits": [Any](), "subscription_type": "max"]) == nil,
-          "and so is one carrying everything but the windows")
+        "seven_day": ["utilization": 94, "resets_at": "2026-11-09T18:00:00.000Z"],
+        "subscription_type": "max",
+    ])
+    check(weekOnly?.week == 94 && weekOnly?.weekReset != nil, "an answer without the five-hour window is still read")
+    check(weekOnly.map { $0.fiveHour == nil && $0.fiveHourReset == nil } == true,
+          "as an account with no five-hour limit, not one with nothing used")
+    check(UsageAPI.reading(from: ["seven_day": ["utilization": 10]]).map { $0.fiveHour == nil } == true,
+          "and so is one that leaves the key out altogether")
+    let idle = UsageAPI.reading(from: ["five_hour": ["utilization": 0, "resets_at": NSNull()],
+                                       "seven_day": ["utilization": 12]])
+    check(idle?.fiveHour == 0 && idle?.fiveHourReset == nil,
+          "a limited account's idle window reads as nothing used, and the limit stays")
+    check(UsageAPI.reading(from: ["five_hour": ["utilization": NSNull()], "seven_day": ["utilization": 12]]) == nil,
+          "a five-hour window that cannot be read is refused rather than taken for no limit")
+    check(UsageAPI.reading(from: ["five_hour": "none", "seven_day": ["utilization": 12]]) == nil,
+          "and so is anything else under that key")
+    check(UsageAPI.reading(from: ["five_hour": NSNull()]) == nil, "an answer with neither window is refused")
+    check(UsageAPI.reading(from: [:]) == nil, "and so is an empty one")
+
+    let epoch: [String: Any] = ["five_hour": ["utilization": 5, "resets_at": 1_800_000_000]]
+    check(UsageAPI.reading(from: epoch)?.fiveHourReset != nil, "epoch seconds parse too")
+
+    let missingWeek: [String: Any] = ["five_hour": ["utilization": 5]]
+    check(UsageAPI.reading(from: missingWeek)?.week == 0,
+          "a missing weekly window reads as nothing used, not as a failure")
+    check(UsageAPI.reading(from: missingWeek)?.fable == nil,
+          "an account without a Fable limit does not grow a made-up one")
 
     // The answer an Ultra account actually got, with most of its null keys
     // left out and closed where the terminal cut it off. Read through
@@ -1328,20 +1422,12 @@ do {
 
     // What is written down when an answer cannot be read: enough to see which
     // part moved, and none of the figures themselves.
-    let described = UsageAPI.shape(of: ultraBody) as? [String: Any]
+    let described = UsageAPI.shape(of: observedBody ?? [:]) as? [String: Any]
     check(described?["five_hour"] as? String == "null", "an unreadable answer is described by its shape")
     check((described?["seven_day"] as? [String: Any])?["utilization"] as? String == "number",
           "naming the kind of each value rather than the value")
-    check((described?["subscription_type"] as? String) == "string", "a string's text is left out too")
-
-    let epoch: [String: Any] = ["five_hour": ["utilization": 5, "resets_at": 1_800_000_000]]
-    check(UsageAPI.reading(from: epoch)?.fiveHourReset != nil, "epoch seconds parse too")
-
-    let missingWeek: [String: Any] = ["five_hour": ["utilization": 5]]
-    check(UsageAPI.reading(from: missingWeek)?.week == 0,
-          "a missing weekly window reads as nothing used, not as a failure")
-    check(UsageAPI.reading(from: missingWeek)?.fable == nil,
-          "an account without a Fable limit does not grow a made-up one")
+    check(((described?["seven_day"] as? [String: Any])?["resets_at"] as? String) == "string",
+          "and leaving a string's text out too")
 }
 
 section("Borrowed credentials")
@@ -1365,6 +1451,18 @@ do {
     }
     check(sourceFiles.count > 10 && usingShared.isEmpty,
           "nothing in the app sends a request through the shared session and its cache")
+    // On macOS 27 listing or removing WebKit stores crashes a process in which
+    // no store has done any work yet, and launch lists them before any page
+    // exists: every pane that reaches claude.ai took Graft down on opening.
+    let storeCalls = sourceFiles.map { url -> (String, String) in
+        (url.lastPathComponent, (try? String(contentsOf: url, encoding: .utf8)) ?? "")
+    }.filter { $0.1.contains("WKWebsiteDataStore.fetchAllDataStoreIdentifiers")
+        || $0.1.contains("WKWebsiteDataStore.remove(forIdentifier")
+        || $0.1.contains("WKWebsiteDataStore.allDataStoreIdentifiers") }
+    check(storeCalls.map(\.0) == ["ArtifactCenter.swift"]
+            && storeCalls.allSatisfy { $0.1.components(separatedBy: "await prepareStores()").count == 3 }
+            && !storeCalls.contains { $0.1.contains("await WKWebsiteDataStore.") },
+          "WebKit is made ready before a store is listed or removed, in the one place that does either")
     let launch = (try? String(contentsOf: repoRoot.appending(path: "Sources/App/ClaudeGraftApp.swift"),
                               encoding: .utf8)) ?? ""
     check(launch.contains("URLCache.shared.removeAllCachedResponses()"),
@@ -1380,7 +1478,7 @@ do {
     let midWrite = makeProfile("Claude-MidWrite", account: "AAAA")
     try? Data(#"{"oauth:tokenCacheV2": "djEw"#.utf8).write(to: midWrite.appending(path: "config.json"))
     var caught: Error?
-    do { _ = try ClaudeCredentials.token(for: midWrite, prompting: .no) } catch { caught = error }
+    do { _ = try ClaudeCredentials.tokens(for: midWrite, prompting: .no) } catch { caught = error }
     check(caught as? ClaudeCredentials.Failure == .configUnreadable,
           "a config caught mid-write is a read to try again, not a profile with no login")
 
@@ -1609,6 +1707,30 @@ do {
     // that the money has nowhere to go.
     check(![links, readme].contains(where: { $0.contains("github.com/sponsors") }),
           "and nothing still offers the sponsor page that cannot take the money")
+
+    // The Help menu is the one place someone stuck inside the app looks for a
+    // person. Releases and problems belong to whoever built this copy, so they
+    // are read out of the feed it updates from; the rest credit the original.
+    check(Links.repository(fromFeed: "https://raw.githubusercontent.com/someone/claude-graft/main/docs/appcast.xml")
+            == URL(string: "https://github.com/someone/claude-graft"),
+          "a feed read raw off a branch names the repository it is published from")
+    check(Links.repository(fromFeed: "https://someone.github.io/claude-graft/appcast.xml")
+            == URL(string: "https://github.com/someone/claude-graft"),
+          "and so does one served by Pages")
+    check(Links.repository(fromFeed: "https://example.com/appcast.xml") == nil,
+          "while a feed anywhere else names none, and the menu falls back to the source")
+    let ownFeed = (try? PropertyListSerialization.propertyList(from: Data(plist.utf8), format: nil)
+        as? [String: Any])?["SUFeedURL"] as? String
+    check(ownFeed.flatMap(Links.repository(fromFeed:)) != nil,
+          "this copy's own feed names the repository its releases and problems go to")
+    for item in ["Claude Graft Help", "What’s New in Claude Graft", "Report a Problem…",
+                 "Aaditya More on LinkedIn", "View Source on GitHub", "Support Claude Graft…"] {
+        check(links.contains("L10n.text(\"\(item)\")"), "the Help menu offers \(item)")
+    }
+    check(!links.contains("Email the Developer"),
+          "and no address that would send a problem with this copy to someone who never built it")
+    check(read("Sources/App/ClaudeGraftApp.swift").contains("GraftHelpCommands()"),
+          "and replaces SwiftUI's help-isn't-available item")
 
     // An enclosure without a signature is one every client refuses, and
     // generate_appcast omits it silently when the key does not match.
@@ -1876,36 +1998,6 @@ do {
                                   interactive: false, serverAsked: true),
           "and an expired wait releases either way")
 
-    // Every failure used to read "did not answer", including the ones where
-    // nothing had been sent, so the row never said what would fix it.
-    let silent = L10n.text("Anthropic's usage service did not answer.")
-    check(UsageMonitor.failureNote(for: ClaudeCredentials.Failure.expired)
-            == ClaudeCredentials.Failure.expired.errorDescription,
-          "a login that has run out is named as one, not as a service that did not answer")
-    check(UsageMonitor.failureNote(for: UsageAPI.Failure.http(401, retryAfter: nil))
-            == UsageAPI.Failure.http(401, retryAfter: nil).errorDescription,
-          "a refused login says so")
-    check(UsageMonitor.failureNote(for: UsageAPI.Failure.http(429, retryAfter: 60))
-            == UsageAPI.Failure.http(429, retryAfter: 60).errorDescription,
-          "and so does a rate limit")
-    check(UsageMonitor.failureNote(for: URLError(.timedOut)) == silent,
-          "only a request that got no answer reads as one")
-    check(UsageMonitor.failureNote(for: ClaudeCredentials.Failure.keychainDeclined)
-            == L10n.text("Live usage needs keychain access."),
-          "a shut keychain keeps its own short line")
-
-    check(!UsageMonitor.backsOff(after: ClaudeCredentials.Failure.expired),
-          "a login that ran out before anything was sent is read again on the next pass")
-    check(!UsageMonitor.backsOff(after: ClaudeCredentials.Failure.notSignedIn),
-          "as is one that could not be read")
-    check(!UsageMonitor.backsOff(after: ClaudeCredentials.Failure.configUnreadable)
-            && !UsageMonitor.backsOff(after: ClaudeCredentials.Failure.noKeychainAccess)
-            && !UsageMonitor.backsOff(after: ClaudeCredentials.Failure.keychainDeclined),
-          "and so is a config caught mid-write or a shut keychain, which waiting fixes neither of")
-    check(UsageMonitor.backsOff(after: UsageAPI.Failure.http(429, retryAfter: nil)),
-          "while anything the service answered still backs off")
-    check(UsageMonitor.backsOff(after: URLError(.timedOut)), "and so does a request that went unanswered")
-
     // Only the service's own answer is the service's wait. A failure after a
     // Retry-After that carries none starts a wait a press may skip again.
     check(UsageMonitor.waitAsked(by: UsageAPI.Failure.http(429, retryAfter: 900)) == 900,
@@ -1913,6 +2005,37 @@ do {
     check(UsageMonitor.waitAsked(by: UsageAPI.Failure.http(500, retryAfter: nil)) == nil
             && UsageMonitor.waitAsked(by: URLError(.timedOut)) == nil,
           "and one that does not, or no answer at all, asks nothing of a press")
+
+    // A failure on this Mac is not the service failing, and waiting longer
+    // between tries fixes none of them.
+    let local: [ClaudeCredentials.Failure] = [.notSignedIn, .expired, .configUnreadable,
+                                              .noKeychainAccess, .keychainDeclined]
+    check(local.allSatisfy { !UsageMonitor.cameFromService($0) },
+          "a login that cannot be read here is retried on the next pass, with no backoff")
+    check(UsageMonitor.cameFromService(UsageAPI.Failure.http(503, retryAfter: nil))
+            && UsageMonitor.cameFromService(UsageAPI.Failure.unreadable)
+            && UsageMonitor.cameFromService(URLError(.notConnectedToInternet)),
+          "while an answer from the service, or none, backs off as before")
+    let anthropic = L10n.text("Anthropic didn't answer")
+    check(local.allSatisfy { UsageMonitor.failureLine($0) != anthropic },
+          "and a local failure never reads as Anthropic not answering")
+    check(UsageMonitor.failureLine(URLError(.timedOut)) == anthropic,
+          "which is kept for the service")
+    // An answer is not the absence of one: a refused login is fixed by
+    // opening that Claude, and a rate limit by waiting, not by the network.
+    check(UsageMonitor.failureLine(UsageAPI.Failure.http(401, retryAfter: nil))
+            == L10n.text("Login refused · open that Claude to renew it")
+            && UsageMonitor.failureLine(UsageAPI.Failure.http(403, retryAfter: nil))
+            == L10n.text("Login refused · open that Claude to renew it"),
+          "a refused login is named as one")
+    check(UsageMonitor.failureLine(UsageAPI.Failure.http(429, retryAfter: 60))
+            == L10n.text("Anthropic is rate-limiting · trying again later"),
+          "and so is a rate limit")
+    check(UsageMonitor.failureLine(UsageAPI.Failure.unreadable)
+            == L10n.text("Anthropic sent something unexpected"),
+          "and an answer that could not be read")
+    check(UsageMonitor.failureLine(UsageAPI.Failure.http(500, retryAfter: nil)) == anthropic,
+          "while a server error still reads as the service not answering")
 
     check(UsageMonitor.reasonCode(UsageAPI.Failure.http(429, retryAfter: 120)) == "http 429, retry after 120s",
           "the log names the status and the wait the service asked for")
@@ -2084,8 +2207,8 @@ do {
     let menuBar = read("App/MenuBarController.swift")
     check(menuBar.contains("setAccessibilityIdentifier(\"status-item\")"),
           "the menu bar item can be asked for by a name that does not change with its figure")
-    check(menuBar.contains("setAccessibilityTitle([spoken, updateTip]"),
-          "and says in words whose figure it shows and what its symbol stands for")
+    check(menuBar.contains("spokenTitle = [spoken, drawing?.spoken, updateTip]") && menuBar.contains("setAccessibilityTitle([spokenTitle, chat]"),
+          "and says in words whose figure it shows, which account answers, what its symbol stands for and which conversation has just begun")
     check(menuBar.contains("window.setAccessibilityParent(NSApp)"),
           "the open dropdown is among the app's windows, where a client looking for its controls searches")
     check(!menuBar.contains("setAccessibilityWindows("),
@@ -2754,30 +2877,38 @@ do {
     monitor.setEntriesForTesting([entry("Claude", fiveHour: 100, running: false),
                                   entry("Claude 2", fiveHour: 46, running: true)])
     check(monitor.headlineEntry?.name == "Claude 2", "the open account is the one shown")
-    check(monitor.headline == 46, "and its figure is the one in the bar")
+    check(monitor.headline == Graft.Usage.Headline(percent: 46, isWeekly: false),
+          "and its five-hour figure is the one in the bar")
 
     monitor.setEntriesForTesting([entry("Claude", fiveHour: 30, running: true),
                                   entry("Claude 2", fiveHour: 80, running: true)])
-    check(monitor.headline == 80, "with several open, the tightest window wins")
+    check(monitor.headline?.percent == 80, "with several open, the tightest window wins")
 
     monitor.setEntriesForTesting([entry("Claude", fiveHour: 100, running: false),
                                   entry("Claude 2", fiveHour: 46, running: false)])
-    check(monitor.headline == 100, "with nothing open it falls back to the tightest")
+    check(monitor.headline?.percent == 100, "with nothing open it falls back to the tightest")
+
+    // Weighed by its five-hour figure, an account without that limit read zero
+    // and lost to every other account however little of its week was left.
+    monitor.setEntriesForTesting([entry("Claude", fiveHour: 30, week: 20, running: true),
+                                  entry("Claude 2", fiveHour: nil, week: 90, running: true)])
+    check(monitor.headlineEntry?.name == "Claude 2",
+          "an account with no five-hour limit is weighed by its week, the figure the bar shows for it")
+    check(monitor.headline == Graft.Usage.Headline(percent: 90, isWeekly: true),
+          "and the bar shows that week, marked as the week")
+    monitor.setEntriesForTesting([entry("Claude", fiveHour: 30, week: 20, running: true),
+                                  entry("Claude 2", fiveHour: nil, week: 10, running: true)])
+    check(monitor.headlineEntry?.name == "Claude", "while a tighter five-hour window still outranks it")
+    monitor.setEntriesForTesting([entry("Claude", fiveHour: 0, week: 5, running: false),
+                                  entry("Claude 2", fiveHour: nil, week: 40, running: false)])
+    check(monitor.headline == Graft.Usage.Headline(percent: 40, isWeekly: true),
+          "and with nothing open it can be the one closest to its limit")
 
     // A figure read off disk hours ago says nothing about the window now.
     let old = Date().addingTimeInterval(-8 * 3600)
     monitor.setEntriesForTesting([entry("Claude", fiveHour: 99, running: false, live: false, sampled: old),
                                   entry("Claude 2", fiveHour: 12, running: false, live: false)])
-    check(monitor.headline == 12, "a stale figure is left out")
-
-    // A plan with no five-hour window is spent against its week, and a bar
-    // reading 0% for it would look like an account with nothing used.
-    monitor.setEntriesForTesting([entry("Claude", fiveHour: nil, week: 64, running: true)])
-    check(monitor.headline == 64, "an account with no five-hour window leads with its week")
-    monitor.setEntriesForTesting([entry("Claude", fiveHour: nil, week: 64, running: false),
-                                  entry("Claude 2", fiveHour: 80, week: 10, running: false)])
-    check(monitor.headlineEntry?.name == "Claude 2",
-          "and is weighed against the others by the figure it leads with")
+    check(monitor.headline?.percent == 12, "a stale figure is left out")
 
     monitor.setEntriesForTesting([])
     check(monitor.headline == nil, "nothing to show when there is nothing to show")
@@ -2900,7 +3031,8 @@ do {
         return CGFloat(row) / scale
     }
     let font = NSFont.menuBarFont(ofSize: 0)
-    let title = FrontTitle.make(icon: icon, tag: short, figure: 34, font: font)
+    let five = Graft.Usage.Headline(percent: 34, isWeekly: false)
+    let title = FrontTitle.make(icon: icon, tag: short, figure: five, font: font)
     check(title.string.hasSuffix(" 34%") && pictures(title).count == 2,
           "the title carries the icon, the tag and then the figure")
     check(pictures(title).allSatisfy { abs($0.midY - font.capHeight / 2) <= 0.5 },
@@ -2917,16 +3049,36 @@ do {
         title.attribute(.baselineOffset, at: title.length - 1, effectiveRange: nil) as? CGFloat
     }
     check(lowered(title) == -FrontTitle.figureDrop, "the figure is lowered onto the symbol's line too")
-    let figureOnly = FrontTitle.make(icon: nil, tag: nil, figure: 34, font: font)
+    let figureOnly = FrontTitle.make(icon: nil, tag: nil, figure: five, font: font)
     check(figureOnly.string == " 34%" && lowered(figureOnly) == -FrontTitle.figureDrop,
           "and by as much with no Claude in front, so it does not jump as one comes forward")
-    let iconOnly = FrontTitle.make(icon: icon, tag: nil, figure: 34, font: font)
+    let iconOnly = FrontTitle.make(icon: icon, tag: nil, figure: five, font: font)
     check(pictures(iconOnly).count == 1 && iconOnly.string.hasSuffix(" 34%"),
           "the icon on its own stands beside the figure")
-    check(pictures(FrontTitle.make(icon: nil, tag: short, figure: 34, font: font)).count == 1,
+    check(pictures(FrontTitle.make(icon: nil, tag: short, figure: five, font: font)).count == 1,
           "and so does the name on its own")
     check(!FrontTitle.make(icon: icon, tag: nil, figure: nil, font: font).string.contains("%"),
           "a Claude with no figure is shown alone")
+
+    let week = Graft.Usage.Headline(percent: 94, isWeekly: true)
+    check(FrontTitle.make(icon: nil, tag: nil, figure: week, font: font).string == " W 94%",
+          "a week's figure carries a W, so it is not taken for a five-hour one")
+    check(!FrontTitle.make(icon: icon, tag: short, figure: five, font: font, afterImage: false).string.hasPrefix(" ")
+            && FrontTitle.make(icon: nil, tag: nil, figure: week, font: font, afterImage: false).string == "W 94%",
+          "with no mark before it, the title starts at the edge of the item instead of a space in")
+    let weekBeside = FrontTitle.make(icon: icon, tag: short, figure: week, font: font)
+    check(weekBeside.string.hasSuffix(" W 94%") && lowered(weekBeside) == -FrontTitle.figureDrop,
+          "beside a Claude in front as well, lowered like any other figure")
+
+    let unlimited = Graft.Usage(fiveHour: nil, week: 94, organization: nil, sampled: Date(), fable: 12)
+    check(FrontTitle.tooltipLine("Claude 2", unlimited) == "Claude 2: no 5-hour limit, 94% of the week, 12% Fable",
+          "the tooltip says an account has no five-hour limit rather than showing a zero")
+    check(FrontTitle.spoken("Claude 2", unlimited) == "Claude 2, 94% of the week",
+          "and the figure in the bar is read out as the week's")
+    let nothingSpent = Graft.Usage(fiveHour: 0, week: 12, organization: nil, sampled: Date())
+    check(FrontTitle.tooltipLine("Claude", nothingSpent) == "Claude: 0% of 5 hours, 12% of the week"
+            && FrontTitle.spoken("Claude", nothingSpent) == "Claude, 0% of 5 hours",
+          "while a limited account with nothing spent keeps its five-hour figure in both")
 }
 
 section("Quitting")
@@ -2948,9 +3100,9 @@ do {
                                         onAnyOf: []),
           "with no screen at all there is nowhere for it to be")
 
-    // A MacBook Air's notch, from auxiliaryTopLeftArea and
-    // auxiliaryTopRightArea, and the item's frames from a live run: widened
-    // by a longer title, and then without it.
+    // This MacBook Air's notch, from auxiliaryTopLeftArea and
+    // auxiliaryTopRightArea, and the item's frames from the live run: with
+    // the new-conversation text showing, and then without it.
     let notch = CGRect(x: 751, y: 1074.5, width: 208, height: 37.5)
     let fullScreen = CGRect(x: 0, y: 0, width: 1710, height: 1112)
     check(!MenuBarPlacement.isReachable(CGRect(x: 866, y: 1081, width: 188.5, height: 24),
@@ -5828,6 +5980,1616 @@ do {
     let beforeReads = reads
     SidebarSync.synchronize(beforeOpening: one)
     check(reads == beforeReads, "independent profiles never open the sidebar helper")
+}
+
+// MARK: - Usage pool
+
+section("Usage pool")
+
+do {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let hour: TimeInterval = 60 * 60
+    let day = 24 * hour
+    let prefix = "anthropic-ratelimit-unified-"
+    func stamp(_ offset: TimeInterval) -> String { String(Int(now.timeIntervalSince1970 + offset)) }
+
+    let read = PoolLimits.parse([
+        (prefix + "5h-utilization", "0.42"), (prefix + "5h-reset", stamp(2 * hour)),
+        (prefix + "7d-utilization", "0.9"), (prefix + "7d-reset", stamp(3 * day)),
+        (prefix + "status", "allowed"),
+    ], now: now)
+    check(read?.fiveHour == 0.42 && read?.week == 0.9,
+          "an answer's headers give the account's two windows as fractions")
+    check(read?.weekReset == now.addingTimeInterval(3 * day) && read?.fiveHourReset == now.addingTimeInterval(2 * hour),
+          "and when each resets, in seconds since 1970")
+    check(read != nil && read?.refusedUntil == nil, "an allowed answer leaves the account open")
+    check(PoolLimits.parse([(prefix + "status", "rejected")], now: now)?.refusedUntil == now.addingTimeInterval(60),
+          "a refusal that names no reset closes the account for a minute")
+    check(PoolLimits.parse([("content-type", "application/json")], now: now) == nil,
+          "an answer that never reached the model teaches nothing about the account")
+    check(PoolLimits.parse([("Anthropic-RateLimit-Unified-5h-Utilization", "0.5")], now: now)?.fiveHour == 0.5,
+          "header names are matched whatever their case")
+    let percent = PoolLimits(fiveHourPercent: 34, fiveHourReset: nil, weekPercent: 71, weekReset: nil, observed: now)
+    check(abs(percent.fiveHour - 0.34) < 1e-9 && abs(percent.week - 0.71) < 1e-9,
+          "the usage endpoint's percentages become the same fractions")
+
+    func limits(five: Double = 0.1, fiveReset: TimeInterval? = nil, week: Double = 0.1,
+                weekReset: TimeInterval?, refused: TimeInterval? = nil) -> PoolLimits {
+        PoolLimits(fiveHour: five, fiveHourReset: fiveReset.map { now + $0 }, week: week,
+                   weekReset: weekReset.map { now + $0 }, refusedUntil: refused.map { now + $0 },
+                   observed: now)
+    }
+    func order(_ accounts: [PoolPolicy.Account], prefer: [String] = []) -> [String] {
+        PoolPolicy.order(own: "own", accounts: accounts, prefer: prefer, now: now)
+    }
+    let soon = PoolPolicy.Account(id: "soon", limits: limits(weekReset: day), usable: true)
+    let later = PoolPolicy.Account(id: "later", limits: limits(weekReset: 5 * day), usable: true)
+    let own = PoolPolicy.Account(id: "own", limits: limits(weekReset: 3 * day), usable: true)
+    check(order([later, own, soon]) == ["soon", "own", "later"],
+          "the account whose week resets soonest is asked first, its own included")
+    let spent = PoolPolicy.Account(id: "soon", limits: limits(five: 0.99, fiveReset: 2 * hour, weekReset: day),
+                                   usable: true)
+    check(order([later, own, spent]) == ["own", "later"],
+          "an account with its five hours spent is passed over until they reset")
+    let rolled = PoolPolicy.Account(id: "soon", limits: limits(five: 0.99, fiveReset: -hour, weekReset: day),
+                                    usable: true)
+    check(order([later, own, rolled]).first == "soon",
+          "and is back at the front once the window it spent has reset")
+    let weekGone = PoolPolicy.Account(id: "soon", limits: limits(week: 1, weekReset: day), usable: true)
+    check(!order([own, weekGone]).contains("soon"), "a spent week is passed over too")
+    let refusing = PoolPolicy.Account(id: "soon", limits: limits(weekReset: day, refused: 30 * 60), usable: true)
+    check(!order([own, refusing]).contains("soon"),
+          "an account the service refused is left alone until the time it named")
+    let unheard = PoolPolicy.Account(id: "unheard", limits: nil, usable: true)
+    check(order([unheard, later]) == ["later", "unheard", "own"],
+          "an account nobody has heard from goes after every one with a known reset")
+    check(order([PoolPolicy.Account(id: "other", limits: nil, usable: true),
+                 PoolPolicy.Account(id: "own", limits: nil, usable: true)]) == ["own", "other"],
+          "with nothing known about anyone, a request stays with the account that sent it")
+    check(order([own, PoolPolicy.Account(id: "soon", limits: limits(weekReset: day), usable: false)]) == ["own"],
+          "an account whose login cannot be used lends nothing")
+    let fullOwn = PoolPolicy.Account(id: "own", limits: limits(five: 1, fiveReset: hour, weekReset: 3 * day),
+                                     usable: true)
+    check(order([fullOwn, later]) == ["later", "own"],
+          "a sender with no room of its own is still the last resort, so the service decides")
+    check(order([later, own, soon], prefer: ["later"]).first == "later",
+          "a conversation stays on the account holding its prompt cache")
+    check(order([own, spent, later], prefer: ["soon"]).first == "own",
+          "but not on one that has since run out of room")
+    check(order([later, own, soon], prefer: ["own", "later"]) == ["own", "later", "soon"],
+          "a conversation moved by hand goes where it was put, ahead of where its cache is")
+    check(PoolPolicy.cacheLifetime(of: Data(#"{"cache_control":{"type":"ephemeral","ttl":"1h"}}"#.utf8)) == 3600,
+          "a request that asked for an hour of cache keeps its conversation where it is for an hour")
+    check(PoolPolicy.cacheLifetime(of: Data(#"{"cache_control":{"type":"ephemeral"}}"#.utf8)) == 300,
+          "and one that did not, for the five minutes a cache lasts by default")
+    check(PoolPolicy.nextWeekReset(now - day, now: now) == now + 6 * day,
+          "a weekly reset that has passed is followed by one a week later")
+
+    check(PoolPolicy.outcome(status: 429, headers: [("retry-after", "30")], borrowed: true, now: now)
+            == .exhausted(until: now + 30),
+          "a refusal for lack of room moves on, for as long as the service asked")
+    check(PoolPolicy.outcome(status: 429, headers: [(prefix + "status", "rejected"), (prefix + "reset", stamp(hour))],
+                             borrowed: false, now: now) == .exhausted(until: now + hour),
+          "or until the reset it named")
+    check(PoolPolicy.outcome(status: 401, headers: [], borrowed: true, now: now) == .loginRefused,
+          "a borrowed login that is refused is not lent again")
+    check(PoolPolicy.outcome(status: 401, headers: [], borrowed: false, now: now) == .deliver,
+          "a sender's own refusal reaches it untouched")
+    check([400, 403, 404].allSatisfy {
+              PoolPolicy.outcome(status: $0, headers: [], borrowed: true, now: now) == .refusedForAccount },
+          "a request another account cannot serve goes back to the one it came from")
+    check([400, 403, 404].allSatisfy {
+              PoolPolicy.outcome(status: $0, headers: [], borrowed: false, now: now) == .deliver },
+          "and on that account it is delivered as the service answered it")
+    check([200, 500, 529].allSatisfy {
+              PoolPolicy.outcome(status: $0, headers: [], borrowed: true, now: now) == .deliver },
+          "an answer, or a service that is down for everyone, is passed straight back")
+
+    check(PoolRequest.isInference(method: "POST", target: "/v1/messages?beta=true"),
+          "a message to the model is the request worth moving")
+    check(!PoolRequest.isInference(method: "POST", target: "/v1/messages/count_tokens?beta=true"),
+          "counting tokens is not")
+    check(!PoolRequest.isInference(method: "GET", target: "/v1/messages"), "nor is anything but a POST")
+    check(!PoolRequest.isInference(method: "POST", target: "/api/oauth/profile"),
+          "nor anything under the account's own API")
+    let upload = Data(#"{"model":"claude-x","messages":[{"content":[{"type":"document","source":{"type":"file","file_id":"file_1"}}]}]}"#.utf8)
+    check(PoolRequest.mustStayWithSender(body: upload, contentEncoding: nil),
+          "a request naming an uploaded file stays with the account holding the file")
+    let quoted = Data(#"{"messages":[{"content":"what is \"file_id\": for"}]}"#.utf8)
+    check(!PoolRequest.mustStayWithSender(body: quoted, contentEncoding: nil),
+          "the same key quoted inside a prompt pins nothing")
+    check(PoolRequest.mustStayWithSender(body: quoted, contentEncoding: "gzip"),
+          "a compressed body cannot be read, so it is not moved")
+    check(!PoolRequest.mustStayWithSender(body: quoted, contentEncoding: "identity"),
+          "an uncompressed one can be")
+    let reasoned = Data(#"{"model":"claude-sonnet-5-5","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"…","signature":"x"}]}]}"#.utf8)
+    check(PoolRequest.carriesBoundReasoning(body: reasoned),
+          "a conversation carrying reasoning back is held to the account that wrote it")
+    check(PoolRequest.carriesBoundReasoning(body: Data(#"{"model":"claude-haiku-5-5","messages":[{"content":[{"type":"redacted_thinking","data":"x"}]}]}"#.utf8)),
+          "and so is one carrying reasoning the service wrote out of sight")
+    check(!PoolRequest.carriesBoundReasoning(body: Data(#"{"model":"claude-sonnet-5-5","thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"hi"}]}"#.utf8)),
+          "a new conversation asking to reason has none yet to lose, so it may go anywhere")
+    check(!PoolRequest.carriesBoundReasoning(body: Data(#"{"model":"claude-sonnet-5-5","messages":[{"content":"what does \"type\":\"thinking\" mean"}]}"#.utf8)),
+          "the words quoted inside a prompt hold nothing")
+    check(!PoolRequest.carriesBoundReasoning(body: Data(String(decoding: reasoned, as: UTF8.self)
+              .replacingOccurrences(of: "claude-sonnet-5-5", with: "claude-opus-5-5[1m]").utf8)),
+          "a model whose reasoning was seen surviving the move is routed as before")
+    check(PoolRequest.carriesBoundReasoning(body: Data(String(decoding: reasoned, as: UTF8.self)
+              .replacingOccurrences(of: "claude-sonnet-5-5", with: "claude-next-1").utf8)),
+          "while one nobody has measured is taken to be bound")
+    check(PoolRequest.model(in: upload) == "claude-x", "the model is read off the request for the record")
+    check(PoolRequest.bearer(in: [("authorization", "Bearer abc ")]) == "abc",
+          "the bearer is found whatever the field's case")
+    check(PoolRequest.bearer(in: [("Authorization", "Basic abc")]) == nil, "and only a bearer counts")
+
+    let sent = HTTPHead.parse(Data("""
+        POST /v1/messages?beta=true HTTP/1.1\r
+        Host: api.anthropic.com\r
+        Content-Length: 12\r
+        Connection: keep-alive, x-hop\r
+        X-Hop: 1\r
+        Authorization: Bearer mine\r
+        X-Claude-Code-Session-Id: s1\r
+        \r
+
+        """.utf8))
+    check(sent?.requestBody == .length(12), "a request's length is read from its head")
+    check(HTTPHead.parse(Data("POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\n".utf8))?
+            .requestBody == nil,
+          "two lengths that disagree are refused rather than guessed between")
+    check(HTTPHead.parse(Data("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".utf8))?.requestBody
+            == .chunked,
+          "a chunked request is read as chunks")
+    check(HTTPHead.parse(Data("GET /ws HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\n".utf8))?
+            .asksToUpgrade == true,
+          "a request for a socket is known as one, so the relay passes it on rather than rebuilding it")
+    check(HTTPHead.parse(Data("GET /ws HTTP/1.1\r\nUpgrade: websocket\r\n\r\n".utf8))?.asksToUpgrade == false,
+          "while an Upgrade the connection does not name asks for nothing a server would honour")
+    let stream = HTTPHead.parse(Data("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n".utf8))
+    check(stream?.responseBody(to: "POST") == .untilClose,
+          "a stream with neither a length nor chunks runs until the connection closes")
+    check(stream?.responseBody(to: "HEAD") == HTTPBody.none, "an answer to HEAD has no body whatever it says")
+    check(HTTPHead.parse(Data("HTTP/1.1 204 No Content\r\nContent-Length: 10\r\n\r\n".utf8))?
+            .responseBody(to: "POST") == HTTPBody.none,
+          "and neither has a 204")
+    if let sent {
+        let lent = String(decoding: HTTPMessage.request(sent, body: Data("hello".utf8),
+                                                        authorization: "Bearer theirs"), as: UTF8.self)
+        check(lent.contains("Authorization: Bearer theirs\r\n") && !lent.contains("mine"),
+              "a lent request carries the lender's token and not the sender's")
+        check(lent.contains("X-Claude-Code-Session-Id: s1\r\n"), "every end-to-end field goes on as it came")
+        check(!lent.lowercased().contains("x-hop") && !lent.lowercased().contains("connection:"),
+              "the hop's own fields, and any it names, do not")
+        check(lent.contains("Content-Length: 5\r\n") && lent.hasSuffix("\r\n\r\nhello"),
+              "the body goes whole, with a length of its own")
+        let kept = String(decoding: HTTPMessage.request(sent, body: Data("hello".utf8), authorization: nil),
+                          as: UTF8.self)
+        check(kept.contains("Authorization: Bearer mine\r\n"), "a request kept by its sender keeps its own token")
+    }
+
+    let wire = Data("5\r\nhello\r\n6;x=1\r\n world\r\n0\r\nTrailer: y\r\n\r\nNEXT".utf8)
+    var framing = ChunkedFraming()
+    var payload: Data? = Data()
+    var used = 0
+    var malformed = false
+    for byte in wire where !framing.isDone {
+        do { used += try framing.consume(Data([byte]), collecting: &payload) } catch { malformed = true; break }
+    }
+    check(!malformed && framing.isDone && payload == Data("hello world".utf8),
+          "a chunked body is read whole however its bytes arrive")
+    check(used == wire.count - 4, "and nothing after its end is taken from the next message")
+    var broken = ChunkedFraming()
+    var ignored: Data?
+    check((try? broken.consume(Data("zz\r\n".utf8), collecting: &ignored)) == nil, "a chunk size that is not hex is refused")
+
+    let member = PoolMember(id: "main", name: "Claude", identify: [UsagePool.digest("token")], token: "token",
+                            limits: percent)
+    let command = PoolCommand(configure: PoolConfiguration(enabled: true, members: [member]))
+    let delivered = (try? JSONEncoder().encode(command))
+        .flatMap { try? JSONDecoder().decode(PoolCommand.self, from: $0) }
+    check(delivered?.configure == command.configure, "the pool reaches the relay exactly as Graft described it")
+
+    // Replacing a relay. A relay holds the logins it was last given, and a new
+    // one knows none until it is told, so only a Graft that can tell it
+    // everything replaces one.
+    func relayAnswering(_ line: String) -> String {
+        let path = NSTemporaryDirectory() + "graft-\(getpid())-\(UUID().uuidString.prefix(6)).sock"
+        unlink(path)
+        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = PoolSocket.unixAddress(path)!
+        _ = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        listen(listener, 1)
+        DispatchQueue.global().async {
+            let client = accept(listener, nil, nil)
+            _ = PoolSocket.readLine(client, limit: 1 << 20)
+            _ = PoolSocket.writeAll(client, Data((line + "\n").utf8))
+            close(client)
+            close(listener)
+            unlink(path)
+        }
+        return path
+    }
+    let today = PoolStatus(binary: "today", pid: 1, started: Date(), enabled: true, configured: true,
+                           members: [], recent: [], sessions: [], openExchanges: 0)
+    let todayLine = String(decoding: try! JSONEncoder().encode(today), as: UTF8.self)
+    check(UsagePoolController.ask(PoolCommand(), at: relayAnswering(todayLine)).reply == .running(binary: "today"),
+          "a relay that answers in this release's shape is known by its binary")
+    // A release that dropped fields this one requires: no sessions, no count
+    // of open exchanges.
+    let older = #"{"binary":"older","pid":1,"started":0,"enabled":true,"configured":true,"members":[],"recent":[]}"#
+    check(UsagePoolController.ask(PoolCommand(), at: relayAnswering(older)).reply == .unreadable,
+          "one answering in an older shape is still a relay, one whose status cannot be read")
+    check(UsagePoolController.ask(PoolCommand(), at: NSTemporaryDirectory() + "graft-nobody.sock").reply == .nobody,
+          "and a socket nobody listens on is no relay at all")
+    check(String(decoding: try! JSONEncoder().encode(PoolCommand(quit: true)), as: UTF8.self) == #"{"quit":true}"#,
+          "the quit sent to a relay that cannot be read is bare, which every relay since 2.0.0 reads")
+
+    let step = UsagePoolController.relayStep
+    check(step(.unreadable, "today", true) == .replace,
+          "a relay whose status cannot be read is asked to step aside, rather than a second started beside it")
+    check(step(.running(binary: "older"), "today", true) == .replace,
+          "and so is one built from another binary, by a Graft that can tell its successor everything")
+    check(step(.running(binary: "older"), "today", false) == .keep && step(.unreadable, "today", false) == .keep,
+          "but a Graft shut out of the keychain leaves either with the logins it was lending")
+    check(step(.running(binary: "today"), "today", true) == .keep && step(.running(binary: "today"), "today", false) == .keep,
+          "a relay built from this binary is kept whatever this Graft can read")
+    check(step(.nobody, "today", false) == .start && step(.nobody, "today", true) == .start,
+          "and with none at all one is started either way, since a Claude pointed at no relay has no Claude Code")
+
+    // A config caught mid-write reads as a login that cannot be read, and the
+    // relay would forget who that Claude is for the pass.
+    let whole: UsagePoolController.Login = (.ready, ["digest"], "token")
+    let caughtMidWrite: UsagePoolController.Login = (.unreadable, [], nil)
+    let carried = UsagePoolController.steady(caughtMidWrite, kept: (whole, now.addingTimeInterval(-30)), now: now)
+    check(carried.state == .ready && carried.identify == ["digest"] && carried.token == "token",
+          "a login caught mid-write is lent as it was last read whole")
+    check(UsagePoolController.steady(caughtMidWrite, kept: (whole, now.addingTimeInterval(-3600)), now: now).state
+            == .unreadable,
+          "but not for long: a file still unreadable after ten minutes is not a rename")
+    check(UsagePoolController.steady((.signedOut, [], nil), kept: (whole, now.addingTimeInterval(-30)), now: now).state
+            == .signedOut,
+          "and a login read whole always says what it says")
+    check(UsagePool.digest("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          "a login is known to the relay by its SHA-256 alone")
+    check(PoolEnvironment.lines == ["HTTPS_PROXY": "http://127.0.0.1:47823",
+                                    "NODE_EXTRA_CA_CERTS": UsagePool.certificateFile.path],
+          "Claude Code is pointed at a port on this Mac alone, and told to trust the relay's own certificate")
+    check(UsagePool.certificateFile.path.hasSuffix("ClaudeGraft/pool/relay-ca.pem"),
+          "which is kept with Graft's state")
+
+    let pool = UsagePoolController()
+    let main = UsagePoolController.mainKey
+    check(pool.sharing == UsageSharing() && pool.accounts.isEmpty,
+          "a machine that never shared usage has nothing set up")
+    pool.addLender("second", to: main)
+    check(pool.lenders(of: main) == ["second"], "a Claude is given an account to draw on")
+    pool.addLender("second", to: main)
+    pool.addLender(main, to: main)
+    check(pool.lenders(of: main) == ["second"], "once, and never itself")
+    check(UsagePoolController().lenders(of: main) == ["second"], "what each Claude draws on is kept between launches")
+    check(pool.lenders(of: "second").isEmpty, "lending to a Claude does not make it a borrower")
+    pool.removeLender("second", from: main)
+    check(pool.sharing.lenders.isEmpty, "a Claude given nothing has no entry left")
+
+    func account(_ id: String, uuid: String?, sealed: String) -> PoolAccount {
+        PoolAccount(id: id, accountUuid: uuid, email: "\(uuid ?? "x")@example.com", organizationName: nil,
+                    scopes: [AccountSignIn.scope], expires: now + 365 * day, added: now, sealed: sealed)
+    }
+    pool.add(account("account:a", uuid: "a", sealed: "first"), to: main)
+    pool.add(account("account:other-id", uuid: "a", sealed: "second"), to: main)
+    check(pool.accounts.count == 1 && pool.accounts.first?.id == "account:a" && pool.accounts.first?.sealed == "second",
+          "one account signed in twice is one entry, holding the newer login")
+    check(pool.lenders(of: main) == ["account:a"], "and is lent once")
+    check(pool.name(of: "account:a") == "a@example.com" && pool.name(of: main) == "Claude",
+          "a signed-in account goes by its address, Claude's own profile by its name")
+    pool.add(account("account:a", uuid: "a", sealed: "third"), to: "elsewhere")
+    pool.removeLender("account:a", from: main)
+    check(pool.accounts.count == 1, "an account another Claude still draws on is kept")
+    pool.removeLender("account:a", from: "elsewhere")
+    check(pool.accounts.isEmpty && UsagePoolController().accounts.isEmpty,
+          "and goes, login and all, when nothing draws on it any more")
+
+    try? fm.createDirectory(at: Graft.mainProfile, withIntermediateDirectories: true)
+    let mainConfig = Graft.mainProfile.appending(path: "config.json")
+    let hadConfig = fm.fileExists(atPath: mainConfig.path)
+    if !hadConfig {
+        try! Data(#"{"lastKnownAccountUuid":"a"}"#.utf8).write(to: mainConfig)
+        check(pool.sameAccount(as: main, besides: "elsewhere") == nil,
+              "nothing is known of a Claude's account until a pass has read it, which no view does")
+        pool.learnAccounts(UsagePoolController.readAccounts([(main, Graft.mainProfile)]))
+        pool.add(account("account:a", uuid: "a", sealed: "s"), to: "elsewhere")
+        check(pool.sameAccount(as: "account:a", besides: "elsewhere") == main,
+              "an account signed in here that a Claude already holds is named as the same account")
+        check(pool.sameAccount(as: "account:a", besides: main) == nil, "but not to the Claude that holds it")
+        pool.removeLender("account:a", from: "elsewhere")
+        try? fm.removeItem(at: mainConfig)
+    }
+
+    // Sealing the way Claude's own store seals, with a key made up here.
+    let key = Data((0..<16).map { UInt8($0 * 7 + 1) })
+    let plain = Data(#"{"A":"1"}"#.utf8)
+    let sealed = ClaudeCredentials.seal(plain, key: key)
+    check(sealed.flatMap { ClaudeCredentials.unseal($0, key: key) } == plain,
+          "a value sealed with Claude's key opens with it")
+    check(sealed != nil && sealed == ClaudeCredentials.seal(plain, key: key)
+            && Data(base64Encoded: sealed!)?.prefix(3) == Data("v10".utf8),
+          "and seals the same every time, in Claude's own format, so a launcher can recognise it")
+    check(ClaudeCodeEnvironment.seal(["B": "/x/y", "A": "1"], key: key)
+            .flatMap { ClaudeCredentials.unseal($0, key: key) } == Data(#"{"A":"1","B":"/x/y"}"#.utf8),
+          "variables are written compact and in order, slashes left alone, the way Claude writes them")
+
+    let profiles = support.appending(path: "PoolProfiles")
+    func profile(_ name: String, _ object: [String: Any]?) -> URL {
+        let url = profiles.appending(path: name)
+        try? fm.removeItem(at: url)
+        try! fm.createDirectory(at: url, withIntermediateDirectories: true)
+        if let object {
+            try! JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted])
+                .write(to: url.appending(path: PoolEnvironment.fileName))
+        }
+        return url
+    }
+    func seal(_ variables: [String: String]) -> String { ClaudeCodeEnvironment.seal(variables, key: key)! }
+    func variables(_ value: String?) -> [String: String]? {
+        value.flatMap { ClaudeCredentials.unseal($0, key: key) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
+    }
+    let lines = PoolEnvironment.lines
+
+    let empty = profile("empty", nil)
+    if let reading = ClaudeCodeEnvironment.read(empty, wanted: true, key: key) {
+        check(!reading.holding && reading.entry.plain == nil && variables(reading.entry.pooled) == lines,
+              "a Claude with no Code environment yet gets one holding just the two lines")
+    } else { check(false, "a Claude with no Code environment yet gets one holding just the two lines") }
+
+    let existing = ["FOO": "bar", "PATH_EXTRA": "/opt/x"]
+    let kept = profile("kept", ["envVars": seal(existing), "tmpDirOverride": NSNull()])
+    if let reading = ClaudeCodeEnvironment.read(kept, wanted: true, key: key) {
+        check(!reading.holding && reading.entry.plain == seal(existing),
+              "what a Claude already holds is recognised byte for byte")
+        check(variables(reading.entry.pooled) == existing.merging(lines) { $1 },
+              "and the lines go in beside its own variables, which stay as they were")
+    } else { check(false, "what a Claude already holds is recognised byte for byte") }
+
+    let holdingProfile = profile("holding", ["envVars": seal(existing.merging(lines) { $1 })])
+    if let reading = ClaudeCodeEnvironment.read(holdingProfile, wanted: false, key: key) {
+        check(reading.holding && variables(reading.entry.plain) == existing,
+              "a Claude holding the lines can be given back exactly what it had without them")
+    } else { check(false, "a Claude holding the lines can be given back exactly what it had without them") }
+    let bare = profile("bare", ["envVars": seal(lines)])
+    if let reading = ClaudeCodeEnvironment.read(bare, wanted: false, key: key), reading.holding {
+        check(reading.entry.plain == nil, "and one that had nothing before gets nothing back")
+    } else { check(false, "and one that had nothing before gets nothing back") }
+
+    let ownProxy = ["https_proxy": "http://proxy.example:8080"]
+    let corporate = profile("corporate", ["envVars": seal(ownProxy)])
+    let corporateReading = ClaudeCodeEnvironment.read(corporate, wanted: true, key: key)
+    check(corporateReading?.conflict == "HTTPS_PROXY" && corporateReading?.entry.wanted == false
+            && corporateReading?.holding == false,
+          "a proxy of the person's own is theirs, whatever its case, and is left alone")
+    let scopedOwn = seal([:])
+    let scoped = profile("scoped", ["envVars": scopedOwn,
+                                    "scopedEnvVars": ClaudeCredentials.seal(
+                                        Data(#"{"acct":{"scope":{"NODE_EXTRA_CA_CERTS":"/mine.pem"}}}"#.utf8),
+                                        key: key)!])
+    check(ClaudeCodeEnvironment.read(scoped, wanted: true, key: key)?.conflict == "NODE_EXTRA_CA_CERTS",
+          "and so is a certificate set for one folder, which would win over the lines without a word")
+    let garbled = profile("garbled", ["envVars": "not sealed at all"])
+    check(ClaudeCodeEnvironment.read(garbled, wanted: true, key: key) == nil,
+          "an environment that will not open is not read as an empty one")
+    check(ClaudeCodeEnvironment.read(kept, wanted: true, key: Data(repeating: 9, count: 16)) == nil,
+          "nor is one sealed with a key Graft does not have")
+    let torn = profile("torn", ["envVars": seal(existing)])
+    fm.createFile(atPath: torn.appending(path: PoolEnvironment.fileName + ".journal").path, contents: Data())
+    check(ClaudeCodeEnvironment.read(torn, wanted: true, key: key) == nil,
+          "nor one Claude was part way through writing")
+
+    // The swap a launcher makes, which needs no key at all.
+    func field(_ profile: URL) -> String? { PoolEnvironment.field(in: profile).value }
+    func journal(_ entries: [URL: PoolEnvironment.Entry]) {
+        var written = PoolEnvironment.Journal()
+        for (url, entry) in entries { written.profiles[PoolEnvironment.key(for: url)] = entry }
+        PoolEnvironment.writeJournal(written)
+    }
+    let swap = profile("swap", ["envVars": "P", "other": ["kept": true]])
+    journal([swap: PoolEnvironment.Entry(wanted: true, plain: "P", pooled: "Q")])
+    PoolEnvironment.settle(beforeOpening: swap) { true }
+    check(field(swap) == "Q", "a Claude that wants the lines is given them as it opens")
+    let rest = (try? JSONSerialization.jsonObject(with: Data(contentsOf: swap.appending(path: PoolEnvironment.fileName))))
+        as? [String: Any]
+    check((rest?["other"] as? [String: Bool])?["kept"] == true, "and nothing else in the file changes")
+    let mode = (try? fm.attributesOfItem(atPath: swap.appending(path: PoolEnvironment.fileName).path))?[.posixPermissions] as? Int
+    check(mode == 0o600, "which stays readable by this user alone")
+    PoolEnvironment.settle(beforeOpening: swap) { false }
+    check(field(swap) == "P", "a Claude whose relay cannot be started opens without the lines rather than without Claude Code")
+    journal([swap: PoolEnvironment.Entry(wanted: false, plain: nil, pooled: "P")])
+    var asked = false
+    PoolEnvironment.settle(beforeOpening: swap) { asked = true; return true }
+    check(field(swap) == nil && rest?["other"] != nil && !asked,
+          "lines no longer wanted come out, a field that was not there before goes, and nobody asks after the relay")
+    let edited = profile("edited", ["envVars": "edited since"])
+    journal([edited: PoolEnvironment.Entry(wanted: true, plain: "P", pooled: "Q")])
+    PoolEnvironment.settle(beforeOpening: edited) { true }
+    check(field(edited) == "edited since", "an environment changed since Graft read it is left for Graft to read again")
+    let tornSwap = profile("tornSwap", ["envVars": "P"])
+    fm.createFile(atPath: tornSwap.appending(path: PoolEnvironment.fileName + ".journal").path, contents: Data())
+    journal([tornSwap: PoolEnvironment.Entry(wanted: true, plain: "P", pooled: "Q")])
+    PoolEnvironment.settle(beforeOpening: tornSwap) { true }
+    try? fm.removeItem(at: tornSwap.appending(path: PoolEnvironment.fileName + ".journal"))
+    check(field(tornSwap) == "P", "and so is one Claude was part way through writing")
+
+    // What removing Graft runs, as `graft-launch --stop-sharing`, with no key.
+    let leftClosed = profile("leftClosed", ["envVars": "Q"])
+    let leftOpen = profile("leftOpen", ["envVars": "Q2"])
+    let leftEdited = profile("leftEdited", ["envVars": "edited since"])
+    journal([leftClosed: PoolEnvironment.Entry(wanted: true, plain: "P", pooled: "Q"),
+             leftOpen: PoolEnvironment.Entry(wanted: true, plain: nil, pooled: "Q2"),
+             leftEdited: PoolEnvironment.Entry(wanted: true, plain: "P", pooled: "Q3")])
+    let stillHeld = PoolEnvironment.takeOutLines { PoolEnvironment.key(for: $0) == PoolEnvironment.key(for: leftOpen) }
+    check(field(leftClosed) == "P", "removing Graft gives a closed Claude back what it held before sharing")
+    check(field(leftOpen) == "Q2" && field(leftEdited) == "edited since"
+            && Set(stillHeld) == [PoolEnvironment.key(for: leftOpen), PoolEnvironment.key(for: leftEdited)],
+          "and leaves an open one, and one changed since Graft read it, saying both may still point at the relay")
+    check(PoolEnvironment.readJournal().profiles.values.allSatisfy { !$0.wanted },
+          "while nothing is left wanting the lines, so a launcher left behind puts none back")
+    let remembered = PoolEnvironment.readJournal()
+    try? fm.removeItem(at: PoolEnvironment.journalFile)
+    let stillOpen = PoolEnvironment.takeOutLines(remembered) { _ in false }
+    check(field(leftOpen) == nil && stillOpen == [PoolEnvironment.key(for: leftEdited)]
+            && !fm.fileExists(atPath: PoolEnvironment.journalFile.path),
+          "a journal remembered after a zap took the file still serves, and is not written back")
+
+    // A whole pass, as Graft runs it.
+    PoolEnvironment.writeJournal(PoolEnvironment.Journal())
+    let closed = profile("closed", ["envVars": seal(existing)])
+    let opened = profile("open", ["envVars": seal(existing)])
+    var states = ClaudeCodeEnvironment.settle(wanted: [closed: true, opened: true], key: key, relay: "/relay",
+                                              relayReady: true, running: { $0 == opened })
+    check(states[PoolEnvironment.key(for: closed)] == .on && variables(field(closed)) == existing.merging(lines) { $1 },
+          "a closed Claude is given the lines straight away")
+    check(states[PoolEnvironment.key(for: opened)] == .waiting && variables(field(opened)) == existing,
+          "an open one is left alone until it next starts, and says so")
+    check(PoolEnvironment.readJournal().relay == "/relay"
+            && PoolEnvironment.readJournal().profiles[PoolEnvironment.key(for: opened)]?.wanted == true,
+          "which is the launcher's to do, from what Graft left it")
+    states = ClaudeCodeEnvironment.settle(wanted: [:], key: key, relay: "/relay", relayReady: true,
+                                          running: { _ in false })
+    check(states[PoolEnvironment.key(for: closed)] == .off && states[PoolEnvironment.key(for: opened)] == .off
+            && variables(field(closed)) == existing && variables(field(opened)) == existing,
+          "a Claude that stops borrowing has its own environment back, exactly")
+    check(PoolEnvironment.readJournal().profiles.isEmpty, "and nothing is left for a launcher to do")
+    states = ClaudeCodeEnvironment.settle(wanted: [closed: true], key: key, relay: nil, relayReady: false,
+                                          running: { _ in false })
+    check(states[PoolEnvironment.key(for: closed)] == .waiting && variables(field(closed)) == existing,
+          "with no relay to send it to, a Claude is not pointed at one")
+    _ = ClaudeCodeEnvironment.settle(wanted: [:], key: key, relay: nil, relayReady: false, running: { _ in false })
+
+    // A value of the person's own set beside the lines after they went in:
+    // the line of Graft's that is left is still Graft's, and still keeps the
+    // relay up while that Claude is open.
+    let ownCertificate = ["NODE_EXTRA_CA_CERTS": "/mine.pem"]
+    let beside = profile("beside", ["envVars": seal(existing.merging(ownCertificate) { $1 }
+        .merging([PoolEnvironment.proxyName: PoolEnvironment.proxyValue]) { $1 })])
+    let besideReading = ClaudeCodeEnvironment.read(beside, wanted: true, key: key)
+    check(besideReading?.holding == true && besideReading?.conflict == "NODE_EXTRA_CA_CERTS"
+            && variables(besideReading?.entry.plain) == existing.merging(ownCertificate) { $1 },
+          "a line of Graft's beside a certificate of the person's own is still Graft's to take out")
+    states = ClaudeCodeEnvironment.settle(wanted: [beside: true], key: key, relay: "/relay", relayReady: true,
+                                          running: { $0 == beside })
+    check(states[PoolEnvironment.key(for: beside)] == .conflict("NODE_EXTRA_CA_CERTS", holding: true)
+            && states[PoolEnvironment.key(for: beside)]?.holdsLines == true
+            && PoolEnvironment.readJournal().profiles[PoolEnvironment.key(for: beside)] != nil,
+          "and while that Claude is open it says why it is not shared and keeps the relay up")
+    states = ClaudeCodeEnvironment.settle(wanted: [:], key: key, relay: "/relay", relayReady: true,
+                                          running: { PoolEnvironment.key(for: $0) == PoolEnvironment.key(for: beside) })
+    check(states[PoolEnvironment.key(for: beside)] == .leaving,
+          "even once nothing is lent to it any more")
+    states = ClaudeCodeEnvironment.settle(wanted: [beside: true], key: key, relay: "/relay", relayReady: true,
+                                          running: { _ in false })
+    check(states[PoolEnvironment.key(for: beside)] == .conflict("NODE_EXTRA_CA_CERTS", holding: false)
+            && variables(field(beside)) == existing.merging(ownCertificate) { $1 },
+          "once it closes the proxy comes out and the person's certificate stays")
+    let lone = profile("lone", ["envVars": seal(existing.merging(
+        [PoolEnvironment.proxyName: PoolEnvironment.proxyValue]) { $1 })])
+    states = ClaudeCodeEnvironment.settle(wanted: [lone: false], key: key, relay: "/relay", relayReady: true,
+                                          running: { $0 == lone })
+    check(states[PoolEnvironment.key(for: lone)] == .leaving,
+          "a proxy of Graft's left alone after the certificate was deleted still counts as pointing at the relay")
+    states = ClaudeCodeEnvironment.settle(wanted: [lone: false], key: key, relay: "/relay", relayReady: true,
+                                          running: { _ in false })
+    check(states[PoolEnvironment.key(for: lone)] == .off && variables(field(lone)) == existing,
+          "and comes out when that Claude closes, though no finished value matched it")
+    _ = profile("lone", ["envVars": seal(existing.merging(
+        [PoolEnvironment.proxyName: PoolEnvironment.proxyValue]) { $1 })])
+    states = ClaudeCodeEnvironment.settle(wanted: [lone: true], key: key, relay: "/relay", relayReady: true,
+                                          running: { _ in false })
+    check(states[PoolEnvironment.key(for: lone)] == .on && variables(field(lone)) == existing.merging(lines) { $1 },
+          "while a Claude still borrowing has the pair made whole")
+    _ = ClaudeCodeEnvironment.settle(wanted: [:], key: key, relay: nil, relayReady: false, running: { _ in false })
+
+    // A copy Claude made of the lines for one folder, which it lays over the
+    // profile-wide ones and which would otherwise outlive them.
+    func scopedField(_ object: [String: Any]) -> String {
+        ClaudeCredentials.seal(try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), key: key)!
+    }
+    func scopedVariables(_ profile: URL) -> [String: Any]? {
+        let outer = (try? JSONSerialization.jsonObject(
+            with: Data(contentsOf: profile.appending(path: PoolEnvironment.fileName)))) as? [String: Any]
+        return (outer?[PoolEnvironment.scopedField] as? String)
+            .flatMap { ClaudeCredentials.unseal($0, key: key) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+    let copiedScopes: [String: Any] = ["acct": [":machine:builtin_local": lines.merging(["FOO": "bar"]) { $1 },
+                                                "builtin_local": ["OWN": "1"]]]
+    let copied = profile("copied", ["envVars": seal(existing), "scopedEnvVars": scopedField(copiedScopes)])
+    check(ClaudeCodeEnvironment.holdsLines(copied, key: key),
+          "lines copied into a folder's own environment still point Claude Code at the relay")
+    states = ClaudeCodeEnvironment.settle(wanted: [copied: false], key: key, relay: "/relay", relayReady: true,
+                                          running: { $0 == copied })
+    check(states[PoolEnvironment.key(for: copied)] == .leaving
+            && PoolEnvironment.readJournal().profiles[PoolEnvironment.key(for: copied)] != nil,
+          "so a Claude holding them that way keeps the relay, until it closes")
+    states = ClaudeCodeEnvironment.settle(wanted: [copied: false], key: key, relay: "/relay", relayReady: true,
+                                          running: { _ in false })
+    let scopesAfter = scopedVariables(copied)?["acct"] as? [String: [String: String]]
+    check(states[PoolEnvironment.key(for: copied)] == .off
+            && scopesAfter?[":machine:builtin_local"] == ["FOO": "bar"]
+            && scopesAfter?["builtin_local"] == ["OWN": "1"]
+            && variables(field(copied)) == existing,
+          "and once it closes the copies come out, leaving everything else in every folder as it was")
+    _ = ClaudeCodeEnvironment.settle(wanted: [:], key: key, relay: nil, relayReady: false, running: { _ in false })
+
+    let verifier = AccountSignIn.randomToken()
+    check(verifier.count == 43 && !verifier.contains { "+/=".contains($0) },
+          "a sign-in's secrets are thirty-two random bytes, written the way a URL can carry them")
+    let authorize = AccountSignIn.authorizeURL(redirect: "http://localhost:4321/callback", verifier: verifier,
+                                               state: "st")
+    let query = URLComponents(url: authorize, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    func item(_ name: String) -> String? { query.first { $0.name == name }?.value }
+    check(authorize.host == "claude.com" && item("scope") == "user:inference"
+            && item("redirect_uri") == "http://localhost:4321/callback" && item("state") == "st"
+            && item("client_id") == AccountSignIn.clientID,
+          "an account is signed in for model requests alone, back to this Mac")
+    let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+    check(item("code_challenge") == challenge && item("code_challenge_method") == "S256",
+          "and the code that comes back is worth nothing without the secret that stayed here")
+    check(!authorize.absoluteString.contains(verifier), "which never leaves this Mac")
+    check(AccountSignIn.page("<b>&").contains("&lt;b&gt;&amp;"), "the page the browser comes back to shows text, never markup")
+
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    func sources(_ folder: String) -> [String] {
+        let directory = repo.appending(path: folder)
+        let names = (try? fm.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.filter { $0.hasSuffix(".swift") }
+            .compactMap { try? String(contentsOf: directory.appending(path: $0), encoding: .utf8) }
+    }
+    let everything = sources("Sources/App") + sources("Sources/Relay") + sources("Sources/Shared")
+    let named = ["Sources/App", "Sources/Relay", "Sources/Shared"].flatMap { folder in
+        ((try? fm.contentsOfDirectory(atPath: repo.appending(path: folder).path)) ?? [])
+            .filter { name in
+                (try? String(contentsOf: repo.appending(path: folder).appending(path: name), encoding: .utf8))?
+                    .contains("ccd-environment-config") == true
+            }
+    }
+    check(!everything.isEmpty && named == ["PoolEnvironment.swift"],
+          "Claude's Code environment is named in one place, and only that place writes it")
+    let signInSource = sources("Sources/App").first { $0.contains("final class AccountSignIn") } ?? ""
+    check(!signInSource.isEmpty && !signInSource.contains("\"refresh_token\""),
+          "the refresh token a sign-in returns is never read")
+    let notes = sources("Sources/Relay").flatMap { $0.components(separatedBy: "\n") }
+        .filter { $0.contains("Diagnostics.note") }
+    check(!notes.isEmpty && notes.allSatisfy { !$0.lowercased().contains("token") && !$0.lowercased().contains("bearer") },
+          "the relay never writes a login into the diagnostics log")
+}
+
+section("The conversation on screen")
+
+do {
+    let now = Date()
+    func chat(_ id: String, quiet: TimeInterval = 0, focused: TimeInterval? = nil, typed: TimeInterval? = nil,
+              begun: TimeInterval? = nil, servedBy: String? = "main", assigned: String? = nil)
+        -> UsagePoolController.Chat {
+        UsagePoolController.Chat(id: id, title: nil, claude: "main", servedBy: servedBy, assigned: assigned,
+                                 choices: ["main", "c2"], lastAt: now.addingTimeInterval(-quiet), passedOver: false,
+                                 startedAt: begun.map { now.addingTimeInterval(-$0) },
+                                 focusedAt: focused.map { now.addingTimeInterval(-$0) },
+                                 promptedAt: typed.map { now.addingTimeInterval(-$0) })
+    }
+    func focus(_ session: String, _ ago: TimeInterval) -> UsagePoolController.Focus {
+        UsagePoolController.Focus(session: session, at: now.addingTimeInterval(-ago))
+    }
+    check(UsagePoolController.current([chat("a", typed: 5), chat("b", quiet: 900, focused: 60)],
+                                      focused: focus("b", 60), now: now)?.id == "b",
+          "the bar names the conversation Claude last brought on screen, whatever was typed elsewhere")
+    var twin = chat("a", focused: 10), other = chat("b", focused: 30)
+    twin.title = "Is 391 prime?"
+    other.title = "Is 391 prime?"
+    check(UsagePoolController.current([twin, other], focused: focus("a", 10), now: now)?.id == "a"
+            && UsagePoolController.current([twin, other], focused: focus("b", 5), now: now)?.id == "b",
+          "two conversations with one name are told apart by their session, never their title")
+    check(UsagePoolController.current([chat("a", quiet: 3 * 3600, focused: 3 * 3600)],
+                                      focused: focus("a", 3 * 3600), now: now)?.id == "a",
+          "and goes on naming it however long it has been quiet")
+    check(UsagePoolController.current([chat("a", focused: 300, typed: 30)], focused: focus("x", 2), now: now) == nil,
+          "a conversation on screen that the bar may not name names nothing, rather than the one before it")
+    let unsent = UsagePoolController.Focus(session: "old", at: now.addingTimeInterval(-2), title: "Before sharing began")
+    let alone = UsagePoolController.uncarried(unsent, in: "main", carried: [], choices: ["main", "c2"], assigned: nil)
+    check(alone?.title == "Before sharing began" && alone?.carried == false
+            && UsagePoolController.current([chat("a", focused: 300, typed: 30)] + [alone].compactMap { $0 },
+                                           focused: unsent, now: now)?.id == "old",
+          "a conversation opened that the relay has not carried is named from its record")
+    check(alone.map(UsagePoolController.answeringKey) == .some(nil)
+            && NewChatTicker.text(title: alone?.title, account: nil) == "Before sharing began"
+            && NewChatTicker.spoken(title: alone?.title, account: nil) == "Conversation on screen “Before sharing began”",
+          "by its title alone, since no account has answered it")
+    var archivedUnsent = unsent
+    archivedUnsent.putAway = true
+    let carriedOld = PoolSession(id: "old", from: "main", servedBy: "main", lastAt: now, requests: 1, model: nil,
+                                 cachedUntil: nil, passedOver: [])
+    check(UsagePoolController.uncarried(archivedUnsent, in: "main", carried: [], choices: [], assigned: nil) == nil
+            && UsagePoolController.uncarried(unsent, in: "main", carried: [carriedOld], choices: [], assigned: nil) == nil,
+          "but not once it is put away, nor when the relay carried it and its own row decides")
+    check(UsagePoolController.current([chat("a", typed: 5)], focused: focus("x", 600), now: now)?.id == "a",
+          "one typed into since the last focus Claude recorded is the one on screen")
+    check(UsagePoolController.current([chat("a", typed: 120), chat("b", begun: 30)], now: now)?.id == "b",
+          "with no word from Claude, the conversation begun or typed into last is named")
+    check(UsagePoolController.current([chat("a", quiet: 60), chat("b", quiet: 10)], now: now)?.id == "b",
+          "and with nothing to say even that, the one that last heard back")
+    check(UsagePoolController.current([chat("a", quiet: 31 * 60, typed: 31 * 60)], now: now) == nil,
+          "a conversation quiet for half an hour is not guessed to be on screen")
+
+    let pool = UsagePoolController()
+    check(UsagePoolController.answeringKey(chat("a", servedBy: "main", assigned: "c2")) == "c2",
+          "a conversation just moved names the account it was moved to, before that account has answered")
+    var refused = chat("a", servedBy: "main", assigned: "c2")
+    refused.passedOver = true
+    check(UsagePoolController.answeringKey(refused) == "main"
+            && UsagePoolController.answeringKey(chat("a", servedBy: "main")) == "main",
+          "and the one that answered in its place once it had no room, as for one left to the ranking")
+    check(pool.automaticTitle(chat("a", servedBy: "main")) == "Automatic · now Claude",
+          "Automatic says which account it has settled on")
+    check(pool.automaticTitle(chat("a", servedBy: "c2", assigned: "c2")) == "Automatic"
+            && pool.automaticTitle(chat("a", servedBy: nil)) == "Automatic",
+          "and only that, once an account is chosen or before anyone has answered")
+
+    let typed = #"{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"Is 391 prime?"}]}],"thread":{"type":"create"}}"#
+    let lone = #"{"model":"m","messages":[{"role":"user","content":"Name this conversation: Is 391 prime?"}]}"#
+    let toolAnswer = #"{"model":"m","thread":{"id":"t"},"messages":[{"role":"user","content":"Is 391 prime?"},"#
+        + #"{"role":"assistant","content":[{"type":"tool_use","id":"u"}]},"#
+        + #"{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":"17 x 23"}]}]}"#
+    let nextTurn = #"{"model":"m","thread":{"id":"t"},"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"u","content":"17 x 23"}]},"#
+        + #"{"role":"assistant","content":"No: 17 x 23."},{"role":"user","content":"And 397?"}]}"#
+    let aside = #"{"model":"m","messages":[{"role":"user","content":"Is 391 prime?"},"#
+        + #"{"role":"assistant","content":"No."},{"role":"user","content":"Name this conversation."}]}"#
+    check(PoolRequest.startsTurn(body: Data(typed.utf8)) && PoolRequest.startsTurn(body: Data(nextTurn.utf8)),
+          "a conversation's first message and a turn typed on its thread are a person typing")
+    check(!PoolRequest.startsTurn(body: Data(toolAnswer.utf8)),
+          "Claude Code carrying on with a tool's answer is not")
+    check(!PoolRequest.startsTurn(body: Data(aside.utf8)),
+          "nor is a short request made beside a conversation, which carries no thread")
+    check(!PoolRequest.startsTurn(body: Data(lone.utf8)),
+          "nor a lone message with no thread, as likely a title asked for as a first message")
+
+    let older = #"{"id":"s","from":"c2","lastAt":0,"requests":1,"passedOver":[]}"#
+    let read = try? JSONDecoder().decode(PoolSession.self, from: Data(older.utf8))
+    check(read != nil && read?.startedAt == nil && read?.promptedAt == nil,
+          "a relay from before conversations were marked new or typed into is still read")
+
+    // Two Claudes whose chats are shared, laid out as Claude keeps them.
+    let mainProfile = root.appending(path: "on-screen/Claude")
+    let otherProfile = root.appending(path: "on-screen/Claude-2")
+    func store(_ profile: URL) -> URL {
+        let dir = profile.appending(path: "claude-code-sessions/\(ownerAccount)/\(ownerOrg)")
+        try! fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    func record(_ profile: URL, _ name: String, session: String, title: String? = nil,
+                archived: Bool = false, focused: TimeInterval? = nil) {
+        var json: [String: Any] = ["sessionId": "local_\(name)", "cliSessionId": session, "isArchived": archived]
+        if let title { json["title"] = title }
+        if let focused { json["lastFocusedAt"] = Int(now.addingTimeInterval(-focused).timeIntervalSince1970 * 1000) }
+        try! JSONSerialization.data(withJSONObject: json).write(to: store(profile).appending(path: "local_\(name).json"))
+    }
+    func gone(_ profile: URL, _ name: String) {
+        try? fm.removeItem(at: store(profile).appending(path: "local_\(name).json"))
+    }
+    record(mainProfile, "r-open", session: "s-open", title: "Is 391 prime?", focused: 60)
+    record(otherProfile, "r-open", session: "s-open", title: "Is 391 prime?", archived: true)
+    record(mainProfile, "r-earlier", session: "s-earlier", title: "Earlier", focused: 300)
+    record(mainProfile, "r-archived", session: "s-archived", title: "Old idea", archived: true, focused: 600)
+    record(mainProfile, "s-marked", session: "s-marked", title: "Filed by Graft")
+    try! Data("1762600000000".utf8).write(to: store(mainProfile).appending(path: "deleted_s-marked"))
+    record(mainProfile, "r-deleted", session: "s-deleted", title: "Throwaway")
+    record(mainProfile, "r-mirrored", session: "s-mirrored", title: "Mirrored")
+    record(otherProfile, "r-mirrored", session: "s-mirrored", title: "Mirrored")
+    let stash = mainProfile.appending(path: "claude-code-sessions/\(ownerAccount)/.\(ownerOrg)\(Graft.stashSuffix)")
+    try! fm.createDirectory(at: stash, withIntermediateDirectories: true)
+    try! JSONSerialization.data(withJSONObject: ["cliSessionId": "s-deleted", "title": "Stashed"])
+        .write(to: stash.appending(path: "local_r-stashed.json"))
+    let projects = Graft.claudeProjects.appending(path: "-Users-test-on-screen")
+    try! fm.createDirectory(at: projects, withIntermediateDirectories: true)
+    try! (#"{"type":"user","message":{"role":"user","content":"hi"},"sessionId":"s-untitled"}"# + "\n"
+          + #"{"type":"custom-title","customTitle":"Prime \"numbers\" — checked","sessionId":"s-untitled"}"#)
+        .write(to: projects.appending(path: "s-untitled.jsonl"), atomically: true, encoding: .utf8)
+
+    let sessions = ["s-open", "s-earlier", "s-archived", "s-marked", "s-deleted", "s-mirrored", "s-untitled"].map {
+        PoolSession(id: $0, from: "main", servedBy: "main", lastAt: now, requests: 1, model: nil,
+                    cachedUntil: nil, passedOver: [])
+    }
+    let profiles = [("main", mainProfile), ("c2", otherProfile)]
+    let first = pool.lookUpRecords(sessions, profiles: profiles, now: now)
+    let open = first.filed["s-open"]
+    check(open?.title == "Is 391 prime?" && open?.archived == false && open?.gone == false,
+          "a conversation is named by the record its Claude keeps")
+    check(open?.focusedAt.map { abs($0.timeIntervalSince(now.addingTimeInterval(-60))) < 0.01 } == true
+            && first.focused["main"] == UsagePoolController.Focus(session: "s-open", at: open!.focusedAt!,
+                                                                  title: "Is 391 prime?"),
+          "and the one Claude focused last is read from the milliseconds Claude writes, with its title")
+    check(first.filed["s-archived"]?.archived == true,
+          "a conversation archived in its sidebar is put away")
+    check(open?.archived == false,
+          "a copy archived in a Claude that shares the chats does not put away the one in its own")
+    check(first.filed["s-marked"]?.gone == true,
+          "a record of Graft's with a deletion marker beside it is gone at once")
+    check(first.filed["s-untitled"]?.title == "Prime \"numbers\" — checked",
+          "a conversation with no record yet takes its title from the transcript, quotes and dashes whole")
+    check(first.filed["s-deleted"]?.title == "Throwaway",
+          "a stash beside the store is not read as a record")
+
+    gone(mainProfile, "r-deleted")
+    gone(mainProfile, "r-mirrored")
+    let second = pool.lookUpRecords(sessions, profiles: profiles, now: now)
+    check(second.filed["s-deleted"]?.gone == false,
+          "a record caught missing once may be in the middle of being rewritten, so nothing is gone yet")
+    let third = pool.lookUpRecords(sessions, profiles: profiles, now: now)
+    check(third.filed["s-deleted"]?.gone == true,
+          "a record seen before and missing on two passes was deleted from its sidebar")
+    check(third.filed["s-mirrored"]?.gone == true,
+          "and a copy still in a Claude that shares the chats does not keep it")
+
+    gone(mainProfile, "r-open")
+    let afterDelete = pool.lookUpRecords(sessions, profiles: profiles, now: now)
+    check(afterDelete.focused["main"]?.session == "s-open"
+            && UsagePoolController.current([chat("s-earlier", focused: 300)],
+                                           focused: afterDelete.focused["main"], now: now) == nil,
+          "deleting the conversation on screen names nothing, never the one focused before it")
+
+    gone(mainProfile, "r-earlier")
+    let org = store(mainProfile)
+    try! fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: org.path)
+    _ = pool.lookUpRecords(sessions, profiles: profiles, now: now)
+    let unopened = pool.lookUpRecords(sessions, profiles: profiles, now: now)
+    try! fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: org.path)
+    check(unopened.filed["s-earlier"]?.gone == false && unopened.focused["main"]?.session == "s-open",
+          "a store that will not open hides nothing, and what it held last still stands")
+
+    // Two Claudes whose stores the mirror keeps alike, the second one used last.
+    let mirrorPool = UsagePoolController()
+    let here = root.appending(path: "mirror-focus/Claude"), there = root.appending(path: "mirror-focus/Claude-2")
+    let pair = [("main", here), ("c2", there)]
+    record(here, "m-a", session: "m-a", title: "Here", focused: 120)
+    record(there, "m-a", session: "m-a", title: "Here", focused: 120)
+    _ = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    record(there, "m-b", session: "m-b", title: "There", focused: 30)
+    let seenThere = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    record(here, "m-b", session: "m-b", title: "There", focused: 30)
+    let copiedHere = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    check(seenThere.focused["c2"]?.session == "m-b" && copiedHere.focused["c2"]?.session == "m-b"
+            && copiedHere.focused["main"]?.session == "m-a",
+          "a focus the mirror copies in from another Claude is that Claude's, and this one still shows its own")
+    record(there, "m-a", session: "m-a", title: "Here", focused: 20)
+    _ = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    record(here, "m-a", session: "m-a", title: "Here, renamed", focused: 20)
+    let overwritten = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    check(overwritten.focused["main"]?.session == "m-a" && overwritten.focused["main"]?.putAway == false
+            && overwritten.focused["main"]?.title == "Here, renamed",
+          "and keeps showing it when the mirror writes another Claude's focus over its record")
+    record(here, "m-c", session: "m-c", title: "Back here", focused: 1)
+    let back = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    check(back.focused["main"]?.session == "m-c" && back.focused["main"]?.title == "Back here",
+          "a conversation this Claude brings on screen afterwards is its own again")
+    gone(here, "m-c")
+    let missingOnce = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    let missingTwice = mirrorPool.lookUpRecords([], profiles: pair, now: now)
+    check(missingOnce.focused["main"]?.session == "m-c" && missingOnce.focused["main"]?.putAway == false
+            && missingTwice.focused["main"]?.session == "m-c" && missingTwice.focused["main"]?.putAway == true,
+          "the conversation on screen is deleted once its record is missing on two passes, not one caught mid-write")
+    record(here, "m-d", session: "s-untitled", focused: 0.5)
+    check(mirrorPool.lookUpRecords([], profiles: pair, now: now).focused["main"]?.title == "Prime \"numbers\" — checked",
+          "one on screen whose record has no title yet takes it from the transcript")
+
+    // FSEvents leaves out the process that wrote, so the write comes from another.
+    let watchedProfile = root.appending(path: "watched")
+    let watchedOrg = watchedProfile.appending(path: "claude-code-sessions/\(ownerAccount)/\(ownerOrg)")
+    try! fm.createDirectory(at: watchedOrg, withIntermediateDirectories: true)
+    var wakes = 0
+    let storeWatch = StoreWatch { wakes += 1 }
+    storeWatch.watch([UsagePoolController.recordStore(of: watchedProfile),
+                      UsagePoolController.recordStore(of: root.appending(path: "never-made"))])
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    let touch = Process()
+    touch.executableURL = URL(fileURLWithPath: "/usr/bin/touch")
+    touch.arguments = [watchedOrg.appending(path: "local_w.json").path]
+    try? touch.run()
+    touch.waitUntilExit()
+    let wakeBy = Date().addingTimeInterval(5)
+    while wakes == 0 && Date() < wakeBy { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    check(wakes > 0, "a record written into a watched store is read when it lands, not on the next tick")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    wakes = 0
+    try! Data("{}".utf8).write(to: watchedOrg.appending(path: "local_x.json"))
+    RunLoop.main.run(until: Date().addingTimeInterval(1))
+    check(wakes == 0, "while Graft's own writes, the sweep's and the mirror's, wake nothing")
+    storeWatch.watch([])
+
+    let plainIcon = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+        NSColor.systemBlue.setFill()
+        rect.fill()
+        return true
+    }
+    let ringed = PoolStrip.strip([plainIcon, plainIcon], lit: 0)
+    let stripPixels = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(ringed.size.width * 2),
+                                       pixelsHigh: Int(ringed.size.height * 2), bitsPerSample: 8,
+                                       samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                       colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    stripPixels.size = ringed.size
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: stripPixels)
+    ringed.draw(in: NSRect(origin: .zero, size: ringed.size))
+    NSGraphicsContext.restoreGraphicsState()
+    func reddish(_ x: CGFloat) -> Bool {
+        guard let colour = stripPixels.colorAt(x: Int(x * 2), y: Int(ringed.size.height)) else { return false }
+        return colour.redComponent > 0.7 && colour.blueComponent < 0.5 && colour.alphaComponent > 0.5
+    }
+    let faintAt = FrontIcon.side + PoolStrip.gap
+    check(reddish(0.5) && !reddish(FrontIcon.side / 2) && !reddish(faintAt + 0.5),
+          "the account answering is ringed in red, and only that one")
+
+    let controllerSource = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().appending(path: "Sources/App/UsagePoolController.swift"),
+        encoding: .utf8)) ?? ""
+    let barSource = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().appending(path: "Sources/App/MenuBarController.swift"),
+        encoding: .utf8)) ?? ""
+    let removal = barSource.components(separatedBy: "func remove()").last?.components(separatedBy: "\n    }").first ?? ""
+    check(removal.contains("newChat = nil") && removal.contains("tickerText = nil")
+            && (barSource.components(separatedBy: "func install()").last?.components(separatedBy: "\n    }").first ?? "")
+                .contains("showNewChat()"),
+          "a status item taken out and put back starts the conversation's text moving again")
+    check(controllerSource.contains("now.timeIntervalSince(session.lastAt) < 30 * 60 && isShown(session)")
+            && controllerSource.contains("isShown(session) && profile(of: session.from).map(PoolEnvironment.key(for:)) == key"),
+          "a conversation put away leaves the dropdown and the bar alike")
+    let rowSource = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().appending(path: "Sources/App/SharedUsageSection.swift"),
+        encoding: .utf8)) ?? ""
+    check(rowSource.contains(".pickerStyle(.inline)") && rowSource.contains("Text(pool.automaticTitle(chat)).tag(\"\")"),
+          "the account menu in the dropdown marks the choice in force, Automatic included")
+
+    let font = NSFont.menuBarFont(ofSize: 0)
+    check(NewChatTicker.text(title: nil, account: "Claude") == "New chat · Claude",
+          "a conversation with no title yet reads as a new chat, with the account answering it")
+    check(NewChatTicker.cycle("New chat · Claude", font: font) == nil
+            && NewChatTicker.image("New chat · Claude", offset: 0, font: font).size.width < NewChatTicker.width,
+          "text short enough to fit stands still")
+    let long = "Work out which of 391, 397 and 403 are prime · Claude 2"
+    check(NewChatTicker.cycle(long, font: font).map { $0 > NewChatTicker.width } == true
+            && NewChatTicker.image(long, offset: 40, font: font).size.width == NewChatTicker.width,
+          "a long title scrolls inside a fixed width, so the items beside it do not move")
+
+    let bar = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().appending(path: "Sources/App/MenuBarController.swift"),
+        encoding: .utf8)) ?? ""
+    check(bar.contains("if wasShowing, let id = chat?.id { keepReachable(id) }")
+            && bar.contains("guard let self, self.newChat?.id == id, self.tickerText != nil, !self.isShowing")
+            && bar.contains("let text = chat?.id == tickerRefused ? nil : words"),
+          "text that pushes the item out of a full bar gives way, and stays out for that conversation")
+    check(bar.contains("item?.menu = menu\n        button.performClick(nil)\n        item?.menu = nil")
+            && !bar.contains("menu.popUp(positioning:"),
+          "the right-click menu opens under the item, where macOS puts menu-bar menus")
+    let blue = Shortcut.IconPreset.next(besides: [.original])
+    check(blue == .blue && Shortcut.IconPreset.next(besides: [.original, .blue, .violet]) == .green,
+          "a new Claude takes the first colour nothing has, never Claude's own")
+    check(Shortcut.IconPreset.next(besides: [.original] + Shortcut.IconPreset.handedOut
+            + Shortcut.IconPreset.handedOut.filter { $0 != .teal }) == .teal,
+          "once every colour is in use, the least used comes round again")
+    check(!Shortcut.IconPreset.handedOut.contains(.original),
+          "Claude's own icon is never handed to another Claude")
+    let strip = PoolStrip.image([.original, .blue, .green], lit: 1)
+    let even = PoolStrip.image([.original, .blue, .green], lit: nil)
+    check(strip != nil && even != nil && strip!.size.width < even!.size.width
+            && strip!.size.height == FrontIcon.side,
+          "the pool's accounts share one picture, the answering one full size and the others smaller")
+    check(PoolStrip.image([.original], lit: 0) == nil,
+          "a Claude that draws on nobody keeps its single icon")
+    check(bar.contains("if let drawing { icon = drawing.strip }")
+            && bar.contains("DispatchQueue.main.async { self?.updateTitle() }"),
+          "the menu bar lights the account answering the conversation in front, and follows the relay's passes")
+    let poolSource = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().appending(path: "Sources/App/UsagePoolController.swift"),
+        encoding: .utf8)) ?? ""
+    check(poolSource.contains("if let claude = claude(sameAccountAs: key) { return preset(of: claude) }")
+            && poolSource.contains("stored.iconPreset = accounts[index].iconPreset"),
+          "an account that is also a Claude wears that Claude's colour, and a login renewed keeps its colour")
+    let contentSource = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().appending(path: "Sources/App/ContentView.swift"),
+        encoding: .utf8)) ?? ""
+    check(contentSource.contains("shortcut.iconPreset = Shortcut.IconPreset.next(besides: Shared.usagePool.coloursInUse)"),
+          "a new Claude is given its colour when it is made, and nothing recolours one that exists")
+    check(bar.contains("let symbol = alert ?? (front == nil ? StatusSymbol.idle : nil)")
+            && bar.contains("afterImage: button.image != nil"),
+          "Graft's own mark gives way to the Claude in front, and comes back for an update or when none is shown")
+}
+
+// MARK: - Artifacts across accounts
+
+/// A group as Graft read it before roles, to prove an older Graft can still
+/// read what this one writes.
+struct LegacyGroup: Decodable {
+    var id: UUID
+    var name: String
+    var emails: [String]
+}
+
+section("Artifacts")
+
+do {
+    let org = "8d22f6d4-6ac4-46cb-840d-3248ad76f2f7"
+    check(ArtifactAPI.headers["X-Frame-CP"] == "go",
+          "every artifact request carries the header without which the service answers 404")
+    check(ArtifactAPI.listPath(rel: "mine", org: org)
+            == "/api/frame/artifacts?rel=mine&empty=exclude&limit=48&org=\(org)&sort=last_viewed",
+          "a list is asked for exactly as claude.ai's own page asks for it")
+    check(ArtifactAPI.listPath(rel: "shared", org: org, after: "a+b=c").hasSuffix("&page_token=a%2Bb%3Dc"),
+          "a page token goes back encoded, so one with a plus sign is not read as a space")
+    check(ArtifactAPI.permPath("aadd31ed-02a0", org: org) == "/api/frame/perm/aadd31ed-02a0?org=\(org)"
+            && ArtifactAPI.invitePath("aadd31ed-02a0", org: org) == "/api/frame/invite/aadd31ed-02a0?org=\(org)",
+          "permissions and invitations are keyed by the artifact's UUID under its organization")
+    check(String(decoding: ArtifactAPI.inviteBody(email: "a@example.com"), as: UTF8.self)
+            == #"{"email":"a@example.com","role":"reader"}"#,
+          "an invitation from a group makes the person a viewer, never an editor")
+    check(String(decoding: ArtifactAPI.readModeBody(public: true, invited: ["u1"]), as: UTF8.self)
+            == #"{"read":{"mode":"public"}}"#,
+          "opening an artifact to anyone with the link")
+    check(String(decoding: ArtifactAPI.readModeBody(public: false, invited: ["u1"]), as: UTF8.self)
+            == #"{"read":{"mode":"users","users":["u1"]}}"#
+            && String(decoding: ArtifactAPI.readModeBody(public: false, invited: []), as: UTF8.self)
+            == #"{"read":{"mode":"owner"}}"#,
+          "closing it again keeps whoever was invited, and is private to the owner when nobody was")
+
+    let account = Data(#"""
+        {"uuid":"acc-1","email_address":"me@example.com","memberships":[
+          {"organization":{"uuid":"team-org","capabilities":["raven"]}},
+          {"organization":{"uuid":"chat-org","capabilities":["chat","claude_pro"]}}]}
+        """#.utf8)
+    check(ArtifactAPI.identity(from: account)
+            == ArtifactAPI.Identity(accountUuid: "acc-1", email: "me@example.com", org: "chat-org"),
+          "an account in a team as well is asked about under the organization that chats")
+    check(ArtifactAPI.identity(from: Data(#"{"error":"unauthorized"}"#.utf8)) == nil,
+          "an answer that names no account is no sign-in")
+
+    check(ArtifactAPI.meansSignedOut(401, at: ArtifactAPI.listPath(rel: "mine", org: org))
+            && ArtifactAPI.meansSignedOut(403, at: ArtifactAPI.accountPath)
+            && !ArtifactAPI.meansSignedOut(403, at: ArtifactAPI.permPath("aadd31ed", org: org))
+            && !ArtifactAPI.meansSignedOut(403, at: "/v1/code/sessions?limit=200"),
+          "a 401 anywhere is signed out, and a 403 is only from the account page")
+    check(ArtifactAPI.needsAccountCheck(403, at: ArtifactAPI.invitePath("aadd31ed", org: org))
+            && !ArtifactAPI.needsAccountCheck(403, at: ArtifactAPI.accountPath)
+            && !ArtifactAPI.needsAccountCheck(404, at: ArtifactAPI.invitePath("aadd31ed", org: org)),
+          "a 403 from anywhere else asks the account page once before it is taken for a sign-out")
+
+    let first = ArtifactAccount(id: UUID(), email: "a@example.com", accountUuid: "acc-a", org: "org-a")
+    let second = ArtifactAccount(id: UUID(), email: "b@example.com", accountUuid: "acc-b", org: "org-b")
+    let fresh = UUID()
+    let again = ArtifactAccounts.signedIn([first, second], store: fresh,
+                                          as: ArtifactAPI.Identity(accountUuid: "acc-a", email: "a@example.com",
+                                                                   org: "org-a"))
+    check(again.accounts.map(\.id) == [fresh, second.id] && again.accounts.first?.accountUuid == "acc-a"
+            && again.retired == [first.id],
+          "signing in again to a listed account keeps the new store, in the account's place, and lets the dead one go")
+    let added = ArtifactAccounts.signedIn([first], store: fresh,
+                                          as: ArtifactAPI.Identity(accountUuid: "acc-b", email: "b@example.com",
+                                                                   org: "org-b"))
+    check(added.accounts.map(\.id) == [first.id, fresh] && added.retired.isEmpty,
+          "a sign-in to an account not yet listed adds it and lets nothing go")
+    let crossed = ArtifactAccounts.signedIn([first, second], store: first.id,
+                                            as: ArtifactAPI.Identity(accountUuid: "acc-b", email: "b@example.com",
+                                                                     org: "org-b"))
+    check(crossed.accounts.map(\.id) == [first.id] && crossed.accounts.first?.accountUuid == "acc-b"
+            && crossed.retired == [second.id],
+          "signing in again to one account as another listed one leaves that one listed once, on the store now holding it")
+    let same = ArtifactAccounts.signedIn([first, second], store: second.id,
+                                         as: ArtifactAPI.Identity(accountUuid: "acc-b", email: "b@example.com",
+                                                                  org: "org-b2"))
+    check(same.accounts.map(\.id) == [first.id, second.id] && same.accounts.last?.org == "org-b2" && same.retired.isEmpty,
+          "signing in again to an account as itself keeps its store and its place")
+
+    let mine = UUID(), other = UUID()
+    let listing = Data(#"""
+        {"artifacts":[
+          {"kind":"page","id":"a1","rel":"mine","title":"Pool check","audience":"owner",
+           "open_url":"https://claude.ai/artifact/N6k75kB4","sort_time":"2026-11-07T10:00:00.000Z",
+           "owner_account":"acc-1"},
+          {"kind":"page","id":"a2","rel":"mine","title":"","audience":"public",
+           "sort_time":"2026-11-08T10:00:00Z"}],
+         "next_page_token":"next"}
+        """#.utf8)
+    let page = ArtifactAPI.page(from: listing, account: mine, org: org)
+    check(page?.artifacts.count == 2 && page?.next == "next"
+            && page?.artifacts.first?.openURL?.absoluteString == "https://claude.ai/artifact/N6k75kB4",
+          "a page of artifacts is read with the link claude.ai gave and the token for the next page")
+    check(page?.artifacts.last?.title == "Untitled" && page?.artifacts.last?.access == .anyoneWithLink,
+          "an artifact with no title is still listed, and a public one reads as open to anyone with the link")
+    check(ArtifactAccess(audience: "users") == .invited && ArtifactAccess(audience: "owner") == .onlyYou
+            && ArtifactAccess(audience: "org") == .organization,
+          "each audience the service names reads as who can open it")
+    check(ArtifactAccess.organization.menuChoice == .organization && ArtifactAccess.onlyYou.menuChoice == .invited
+            && ArtifactAccess.invited.menuChoice == .invited
+            && ArtifactAccess.anyoneWithLink.menuChoice == .anyoneWithLink,
+          "an artifact shared with its organization checks an entry of its own, never the invited one")
+    check(!ArtifactAccess.anyoneWithLink.changes(toPublic: true) && !ArtifactAccess.invited.changes(toPublic: false)
+            && !ArtifactAccess.onlyYou.changes(toPublic: false)
+            && ArtifactAccess.invited.changes(toPublic: true) && ArtifactAccess.anyoneWithLink.changes(toPublic: false)
+            && ArtifactAccess.organization.changes(toPublic: false),
+          "asking an artifact to be what it already is changes nothing, and leaving the organization is a change")
+    check(ArtifactAPI.permissions(from: Data(#"{"read":{"mode":"org"}}"#.utf8))?.mode == "org"
+            && ArtifactAPI.permissions(from: Data(#"{"version":"v1"}"#.utf8))?.mode == nil,
+          "who can open an artifact is read from its permissions as claude.ai has it now")
+    check(ArtifactAPI.page(from: Data("<html>".utf8), account: mine, org: org) == nil,
+          "a challenge page in place of a list is not taken for an empty one")
+
+    let owned = Artifact(id: "x", account: mine, org: org, title: "Plan", kind: "page", openURL: nil,
+                         audience: "users", rel: "mine", sortTime: Date(timeIntervalSince1970: 10),
+                         ownerAccount: "acc-1")
+    var sharedCopy = owned
+    sharedCopy.account = other
+    sharedCopy.rel = "shared"
+    var newer = owned
+    newer.id = "y"
+    newer.sortTime = Date(timeIntervalSince1970: 20)
+    let merged = ArtifactAPI.merge([[sharedCopy], [owned, newer]])
+    check(merged.map(\.id) == ["y", "x"] && merged.last?.account == mine,
+          "an artifact two of your accounts can see is listed once, under the one that owns it, newest first")
+
+    check(GroupAddresses.parse("Ana <ANA@example.com>, bo@example.org; ana@example.com\nnot-an-address\nx@y")
+            == ["ana@example.com", "bo@example.org"],
+          "addresses pasted from a mail header are read once each, and what is not an address is dropped")
+
+    let groups = [ArtifactGroup(id: UUID(), name: "Design", emails: ["a@example.com"])]
+    let savedGroups = ArtifactFiles.save(groups, to: ArtifactFiles.groups)
+    if case .read(let back) = ArtifactFiles.readEach(ArtifactGroup.self, from: ArtifactFiles.groups) {
+        check(savedGroups && back.values == groups && back.lost == 0
+                && ArtifactFiles.groups.path.hasPrefix(Graft.applicationSupport.path),
+              "groups are kept in Graft's own folder and read back as they were saved")
+    } else {
+        check(false, "groups are kept in Graft's own folder and read back as they were saved")
+    }
+
+    let filesFolder = root.appending(path: "artifact-files")
+    try? fm.createDirectory(at: filesFolder, withIntermediateDirectories: true)
+    let absent = filesFolder.appending(path: "absent.json")
+    let garbled = filesFolder.appending(path: "artifact-accounts.json")
+    try? Data("{not json".utf8).write(to: garbled)
+    func isMissing<T>(_ reading: ArtifactFiles.Reading<T>) -> Bool { if case .missing = reading { return true }; return false }
+    func isUnreadable<T>(_ reading: ArtifactFiles.Reading<T>) -> Bool { if case .unreadable = reading { return true }; return false }
+    check(isMissing(ArtifactFiles.read([ArtifactAccount].self, from: absent))
+            && isUnreadable(ArtifactFiles.read([ArtifactAccount].self, from: garbled)),
+          "a file that is not there is told apart from one that is there and will not decode")
+    let aside = ArtifactFiles.setAside(garbled, at: Date(timeIntervalSince1970: 1_700_000_000))
+    check(aside?.lastPathComponent == "artifact-accounts.unreadable-1700000000.json"
+            && !fm.fileExists(atPath: garbled.path)
+            && (try? Data(contentsOf: aside!)) == Data("{not json".utf8),
+          "an unreadable file is moved aside whole, beside where it was, rather than saved over")
+    let oneBad = filesFolder.appending(path: "groups.json")
+    try? Data(#"""
+        [{"id":"6E1F0F55-8C8B-4E64-8F73-6D3A50D3E5B1","name":"Design","emails":["a@example.com"]},
+         {"id":"not a uuid","name":"Broken","emails":["b@example.com"]},
+         {"id":"7E1F0F55-8C8B-4E64-8F73-6D3A50D3E5B1","name":"Review","emails":[]}]
+        """#.utf8).write(to: oneBad)
+    if case .read(let found) = ArtifactFiles.readEach(ArtifactGroup.self, from: oneBad) {
+        check(found.values.map(\.name) == ["Design", "Review"] && found.lost == 1,
+              "one group that will not decode costs that group, not every group in the file")
+    } else {
+        check(false, "one group that will not decode costs that group, not every group in the file")
+    }
+
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    let center = (try? String(contentsOf: repo.appending(path: "Sources/App/ArtifactCenter.swift"),
+                              encoding: .utf8)) ?? ""
+    let app = ((try? FileManager.default.contentsOfDirectory(atPath: repo.appending(path: "Sources/App").path)) ?? [])
+        .compactMap { try? String(contentsOf: repo.appending(path: "Sources/App/\($0)"), encoding: .utf8) }
+        .joined()
+    check(!center.isEmpty && !app.contains("httpCookieStore") && !app.contains("HTTPCookieStorage"),
+          "the claude.ai sign-in is never read out of its web store")
+    check(center.contains(#"credentials: "same-origin""#) && !center.contains("URLSession"),
+          "artifact requests go from claude.ai's own page, never from a request Graft builds itself")
+    check(center.contains("WKWebsiteDataStore(forIdentifier: account)")
+            && center.contains("WKWebsiteDataStore.remove(forIdentifier: account)"),
+          "each account signs in to a store of its own, and signing out deletes it")
+    check(!center.contains("Timer") && !center.contains("onReceive"),
+          "artifacts are asked for when the list is shown or refreshed, never on a timer")
+    check(center.range(of: #"session\?\.close\(\)[\s\S]*await session\?\.released\(\)\s*await ClaudeWebSession\.forget\(id\)"#,
+                       options: .regularExpression) != nil
+            && center.contains("if closed { throw Failure.signedOut }")
+            && center.range(of: #"guard account\(id\) != nil else \{\s*session\.close\(\)"#, options: .regularExpression) != nil,
+          "a store is removed only once every page on it has let go, and nothing builds a new one on it meanwhile")
+    check(center.range(of: #"release\(\)\s*let done = self\.done\s*Task \{ done\(identity\) \}"#,
+                       options: .regularExpression) != nil
+            && center.range(of: #"if signIn\?\.account == id \{\s*signIn\?\.close\(\)"#, options: .regularExpression) != nil,
+          "a sign-in window lets go of its pages before its sign-in is acted on, and signing out closes it")
+    check(!center.contains("try? await WKWebsiteDataStore.remove")
+            && center.contains(#"Diagnostics.note("artifacts.store removal failed""#),
+          "a store that will not be removed is written down and tried again, never dropped in silence")
+    check(center.contains("if accountsWereRead, #available(macOS 14, *)")
+            && center.contains("await ClaudeWebSession.storeIdentifiers()"),
+          "stores no listed account is under are removed at launch, and only against an accounts file that was read")
+    check(center.contains("mayWriteAccounts = Self.setAside(ArtifactFiles.accounts)")
+            && center.contains("mayWriteGroups = Self.setAside(ArtifactFiles.groups)")
+            && center.contains("guard mayWriteAccounts else { return }")
+            && center.components(separatedBy: "ArtifactFiles.save(accounts").count == 2,
+          "an accounts or groups file that will not read is set aside before anything is saved where it was")
+    check(center.contains("observe(\\.url"),
+          "a sign-in that ends by moving inside claude.ai's page is noticed, not only one that loads a new page")
+    check(center.contains("configuration: configuration") && center.contains("func webViewDidClose"),
+          "a provider's sign-in gets a window of its own to answer from, and closing it asks again")
+
+    let scene = (try? String(contentsOf: repo.appending(path: "Sources/App/ClaudeGraftApp.swift"),
+                             encoding: .utf8)) ?? ""
+    check(scene.contains(".modifier(SmallestWindow())") && !scene.contains("minWidth: 720, minHeight: 460")
+            && scene.contains("CGSize(width: 820, height: 560)"),
+          "the window cannot be dragged smaller than the 820 by 560 every page is laid out for")
+}
+
+section("Artifact roles, actions and exports")
+
+do {
+    let org = "8d22f6d4-6ac4-46cb-840d-3248ad76f2f7"
+    func text(_ data: Data) -> String { String(decoding: data, as: UTF8.self) }
+    check(text(ArtifactAPI.inviteBody(email: "a@example.com", role: .commenter))
+            == #"{"email":"a@example.com","role":"commenter"}"#
+            && text(ArtifactAPI.inviteBody(email: "a@example.com", role: .editor))
+            == #"{"email":"a@example.com","role":"editor"}"#,
+          "a commenter and an editor are invited by the role names claude.ai's invitations use")
+
+    let both = ArtifactAPI.permissions(from: Data(#"""
+        {"version":"v7","read":{"mode":"users","users":["u1"]},"commentersEnabled":true,"editorsEnabled":true}
+        """#.utf8))
+    let none = ArtifactAPI.permissions(from: Data(#"{"version":"v7","read":{"mode":"owner"}}"#.utf8))
+    let older = ArtifactAPI.permissions(from: Data(#"{"version":3,"writersEnabled":true}"#.utf8))
+    check(both?.commenters == true && both?.editors == true && both?.version == "v7"
+            && none?.commenters == false && none?.editors == false && older?.editors == true,
+          "an artifact's permissions say whether it takes commenters and editors, and silence offers neither")
+    if let both, let none {
+        var commentsOnly = none
+        commentsOnly.commenters = true
+        check(ArtifactRole.editor.offered(by: both) == .editor
+                && ArtifactRole.editor.offered(by: commentsOnly) == .commenter
+                && ArtifactRole.editor.offered(by: none) == .reader
+                && ArtifactRole.commenter.offered(by: none) == .reader
+                && ArtifactRole.reader.offered(by: both) == .reader,
+              "where an artifact does not take a role, the person gets the most it does take and never more")
+    }
+
+    let id = UUID(uuidString: "6E1F0F55-8C8B-4E64-8F73-6D3A50D3E5B1")!
+    let old = Data(#"{"emails":["a@example.com","b@example.com"],"id":"6E1F0F55-8C8B-4E64-8F73-6D3A50D3E5B1","name":"Design"}"#.utf8)
+    let oldGroup = try? JSONDecoder().decode(ArtifactGroup.self, from: old)
+    check(oldGroup?.emails == ["a@example.com", "b@example.com"] && oldGroup?.role(of: "a@example.com") == .reader
+            && oldGroup?.commonRole == .reader,
+          "a group saved before roles existed reads back with everyone a viewer, as it was shared before")
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    check(oldGroup.flatMap { try? encoder.encode($0) }.map(text) == text(old),
+          "a group of viewers is written exactly as before roles, so an older Graft reads it unchanged")
+    var mixed = ArtifactGroup(id: id, name: "Review", emails: ["a@example.com", "b@example.com", "c@example.com"])
+    mixed.setRole(.editor, for: "a@example.com")
+    mixed.setRole(.commenter, for: "b@example.com")
+    let saved = try? encoder.encode(mixed)
+    let back = saved.flatMap { try? JSONDecoder().decode(ArtifactGroup.self, from: $0) }
+    check(back == mixed && back?.role(of: "c@example.com") == .reader && back?.commonRole == nil,
+          "a mixed group keeps each person's role through a save")
+    check(saved.flatMap { try? JSONDecoder().decode(LegacyGroup.self, from: $0) }?.emails == mixed.emails,
+          "an older Graft can still read a group with roles, as viewers only")
+    var editors = mixed
+    editors.setRoleForEveryone(.editor)
+    var viewers = mixed
+    viewers.setRoleForEveryone(.reader)
+    check(editors.commonRole == .editor && viewers.commonRole == .reader && viewers.roles.isEmpty,
+          "a group can be made all editors, or all viewers again")
+    let unknown = Data(#"{"emails":["a@example.com","b@example.com"],"id":"6E1F0F55-8C8B-4E64-8F73-6D3A50D3E5B1","name":"X","roles":{"a@example.com":"manager","b@example.com":"editor"}}"#.utf8)
+    let fromNewer = try? JSONDecoder().decode(ArtifactGroup.self, from: unknown)
+    check(fromNewer?.role(of: "a@example.com") == .reader && fromNewer?.role(of: "b@example.com") == .editor,
+          "a role this Graft does not know costs that one person their role, not the group")
+
+    check(ArtifactAPI.retitlePath("aadd31ed", org: org) == "/api/frame/retitle/aadd31ed?org=\(org)"
+            && text(ArtifactAPI.retitleBody("New \"name\"")) == #"{"title":"New \"name\""}"#
+            && ArtifactAPI.duplicatePath("aadd31ed", org: org) == "/api/frame/duplicate/aadd31ed?org=\(org)"
+            && ArtifactAPI.artifactPath("aadd31ed", org: org) == "/api/frame/aadd31ed?org=\(org)",
+          "renaming, copying, deleting and reading an artifact go to the artifact service's own paths")
+    check(ArtifactAPI.reason(from: Data(#"{"reason":"title_invalid"}"#.utf8)) == "title_invalid"
+            && ArtifactAPI.reason(from: Data(#"{"error":{"reason":"org_mismatch"}}"#.utf8)) == "org_mismatch",
+          "claude.ai's reason for a refusal is read wherever it puts it")
+
+    let row = Data(#"""
+        {"artifacts":[
+          {"kind":"page","id":"a1","rel":"mine","title":"T","audience":"owner","renamable":true,
+           "duplicable":true,"duplicate_available":false},
+          {"kind":"page","id":"a2","rel":"shared","title":"U","audience":"users"}]}
+        """#.utf8)
+    let rows = ArtifactAPI.page(from: row, account: UUID(), org: org)?.artifacts
+    check(rows?.first?.renamable == true && rows?.first?.duplicable == true && rows?.first?.duplicateAvailable == false
+            && rows?.last?.renamable == false && rows?.last?.duplicable == false,
+          "only what the list says claude.ai allows is offered, and a list that says nothing offers nothing")
+
+    let bootstrap = Data(#"""
+        {"ver":"v12","assetToken":"a.b.c.1900000000","title":"Plan","files":[
+          {"path":"index.html"},{"path":"app.js"},{"path":"img/a b.png"},
+          {"path":"../escape.html"},{"path":"/etc/passwd"},{"path":"a//b"}]}
+        """#.utf8)
+    let files = ArtifactAPI.source(from: bootstrap)
+    check(files?.files == ["index.html", "app.js", "img/a b.png"] && files?.version == "v12",
+          "an artifact's files are read by the paths it lists, and none that could climb out of the folder")
+    check(ArtifactAPI.source(from: Data(#"{"ver":"v1"}"#.utf8)) == nil,
+          "an artifact that gives no token to read its files with is not read")
+    if let files {
+        let url = ArtifactAPI.fileURL("AADD31ED-02A0", source: files, path: "img/a b.png")?.absoluteString
+        check(url == "https://aadd31ed-02a0.frame.claudeusercontent.com/_f/v12/_src/img/a%20b.png?__frame_t=a.b.c.1900000000",
+              "a file is read from the artifact's own file host, as its viewer reads it")
+        check(ArtifactAPI.fileURL("x", source: files, path: "../a") == nil,
+              "no file is read from outside the artifact")
+    }
+    check(ArtifactExportFormat.fileName(for: "Q3 plan: draft/2", format: .markdown, singleFile: true) == "Q3 plan- draft-2.md"
+            && ArtifactExportFormat.fileName(for: "  ", format: .pdf, singleFile: true) == "Artifact.pdf"
+            && ArtifactExportFormat.fileName(for: "Site", format: .html, singleFile: false) == "Site.zip"
+            && ArtifactExportFormat.fileName(for: "Site", format: .word, singleFile: false) == "Site.docx",
+          "an export is named after the artifact, and a page of several files goes out zipped")
+
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    func source(_ name: String) -> String {
+        (try? String(contentsOf: repo.appending(path: "Sources/App/\(name)"), encoding: .utf8)) ?? ""
+    }
+    let export = source("ArtifactExport.swift")
+    let center = source("ArtifactCenter.swift")
+    check(export.contains("websiteDataStore = .nonPersistent()") && !export.contains("dataStore(for")
+            && export.contains("decidePolicyFor") && center.contains(#"credentials: "omit""#),
+          "an export is drawn where no sign-in is, and its files are read with no cookie")
+    check(!export.contains("URLSession") && !export.contains("httpCookieStore"),
+          "an export reads nothing a page of claude.ai did not hand it")
+    check(!center.contains("status == 401 || status == 403")
+            && center.contains("if ArtifactAPI.meansSignedOut(status, at: path) { throw Failure.signedOut }")
+            && center.range(of: #"catch ClaudeWebSession\.Failure\.signedOut \{[^}]*return\s*\} catch \{\s*refusal = refusal \?\? "unanswered""#,
+                            options: .regularExpression) != nil,
+          "a refused invitation is counted and the rest still go out; only a sign-out stops them")
+    check(center.contains(#"response.headers.get("Content-Length")"#) && center.contains("if (size > limit)")
+            && center.contains("download(url, limit: ArtifactAPI.maximumExportBytes - total)"),
+          "an export file larger than what is left of the budget is refused in the page, before it is encoded there")
+    check(center.contains("func webViewWebContentProcessDidTerminate"),
+          "a page whose process died is dropped, so the account is not left answering nothing")
+    check(center.contains("if !loading.isEmpty, !closed { startLoading() }")
+            && center.contains("guard view === webView else { return }")
+            && center.contains("Task.sleep(nanoseconds: Self.loadLimit)"),
+          "a page dropped while it loads leaves its waiting requests to the next page, and none waits for good")
+    check(center.contains("guard loadGenerations[id] == generation, account(id) != nil else { return }")
+            && center.components(separatedBy: "load(id, again: true)").count >= 2,
+          "a list a sign-in has since superseded writes nothing over the one that followed it")
+    let view = source("ArtifactsView.swift")
+    check(view.contains("signInHint") && source("ProjectsView.swift").contains("ArtifactsView.signInHint")
+            && center.contains("ArtifactsView.signInHint"),
+          "every way into a sign-in says to use an emailed code")
+    check(view.contains("Circle()") && view.range(of: #"Circle\(\)[\s\S]*Menu \{"#, options: .regularExpression) != nil,
+          "an account's dot is drawn beside its menu, where a borderless menu cannot drop it")
+    check(view.contains("get: { current.menuChoice }")
+            && view.contains("guard choice != current.menuChoice, choice != .organization else { return }")
+            && view.contains(#"Text("Your Organization").tag(ArtifactAccess.organization)"#)
+            && center.contains("guard artifact.access.changes(toPublic: isPublic), !busy.contains(key) else { return }")
+            && center.contains("!ArtifactAccess(audience: mode).changes(toPublic: isPublic)"),
+          "choosing the entry already checked sends nothing, and an organization's access is never dropped unasked")
+
+    let content = source("ContentView.swift")
+    let model = source("Model.swift")
+    check(content.contains("Shortcut(name: store.uniqueName(), source: .own)"),
+          "a new Claude starts with chats of its own")
+    check(model.contains("var source: Source = .main")
+            && model.contains("decodeIfPresent(Source.self, forKey: .source) ?? .main")
+            && content.components(separatedBy: "store.shortcuts.append(").count == 2,
+          "a Claude saved before that keeps reading the chats it read, and nothing else makes a new one")
+    let saved1 = Data(#"[{"id":"6E1F0F55-8C8B-4E64-8F73-6D3A50D3E5B1","name":"Work","folder":"Claude-Work"}]"#.utf8)
+    check((try? JSONDecoder().decode([Shortcut].self, from: saved1))?.first?.source == .main,
+          "a saved Claude with no source written down still reads Claude's own chats")
+}
+
+// MARK: - Projects and search across accounts
+
+section("Projects and search")
+
+do {
+    let org = "11111111-2222-4333-8444-555555555555"
+    let mine = UUID()
+    let lent = UUID()
+    check(ClaudeAPI.projectsPath(org: org, offset: 30)
+            == "/api/organizations/\(org)/projects_v2?include_harmony_projects=true&limit=30&offset=30&order_by=latest_chat",
+          "projects are asked for as the Projects page asks, thirty at a time")
+    check(ClaudeAPI.searchPath(org: org) == "/api/organizations/\(org)/conversation/search/v2"
+            && String(decoding: ClaudeAPI.searchBody(query: "pi \"zero\""), as: UTF8.self)
+                == #"{"n":25,"query":"pi \"zero\"","target_snippet_size":100}"#,
+          "a search is posted with the query, the count and the snippet size the search box sends")
+    check(ClaudeAPI.codeSessionsPath() == "/v1/code/sessions?limit=200"
+            && ClaudeAPI.codeSessionsPath(after: "a|b=").hasSuffix("&cursor=a%7Cb%3D"),
+          "Code sessions are listed two hundred at a time, the cursor carried as given")
+    let headers = ClaudeAPI.codeHeaders(org: org)
+    check(headers["x-organization-uuid"] == org && headers["anthropic-beta"] == "ccr-byoc-2025-07-29"
+            && headers["X-Frame-CP"] == nil,
+          "the session list names the organization and its beta, and none of the artifact service's headers")
+    check(ClaudeAPI.codeSessionURL("cse_01WY8cUV").absoluteString == "https://claude.ai/code/session_01WY8cUV",
+          "a session listed as cse_ opens as session_ under the same name")
+
+    let projectPage = Data("""
+        {"data":[
+          {"uuid":"p-1","name":"Graft","description":"the app","is_private":true,"is_starred":false,
+           "is_starter_project":false,"archived_at":null,"updated_at":"2026-11-07T10:00:00.000Z",
+           "creator":{"uuid":"c","full_name":"Aaditya"}},
+          {"uuid":"p-2","name":"","is_private":false,"is_starred":true,"is_starter_project":true,
+           "archived_at":null,"updated_at":"2026-10-01T10:00:00Z"},
+          {"uuid":"p-3","name":"Old","archived_at":"2026-09-01T00:00:00Z"}],
+         "pagination":{"total":3,"limit":30,"offset":0,"has_more":true}}
+        """.utf8)
+    let listed = ClaudeAPI.projects(from: projectPage, account: mine)
+    check(listed?.projects.map(\.id) == ["p-1", "p-2"] && listed?.hasMore == true,
+          "an archived project is left off, as on the Projects page, and another page is followed")
+    check(listed?.projects.last?.name == "Untitled" && listed?.projects.last?.isExample == true
+            && listed?.projects.first?.creator == "Aaditya",
+          "a project with no name is still listed, and the example project says so")
+    check(ClaudeAPI.projects(from: Data("<html>".utf8), account: mine) == nil,
+          "a page that is not a project list is refused, not read as an empty one")
+    let merged = ClaudeAPI.merge([listed?.projects ?? []])
+    check(merged.first?.id == "p-2", "a starred project comes first, as it does on claude.ai")
+    check(merged.first?.openURL.absoluteString == "https://claude.ai/project/p-2",
+          "a project opens at its own page")
+
+    let searchPage = Data("""
+        {"data":[
+          {"conversation":{"uuid":"c-2","name":"Camera Pi","updated_at":"2026-11-06T10:00:00Z",
+                           "project_uuid":"p-1","is_archived":true,"is_starred":true},
+           "matched_snippet":{"text":"a raspberry camera","matches":[{"start":2,"end":11}]},
+           "title_matches":[],"semantic_rank":1},
+          {"conversation":{"uuid":"c-1","name":"Raspberry Pi Pico","updated_at":"2026-11-07T10:00:00Z",
+                           "project_uuid":null,"is_archived":false},
+           "matched_snippet":{"text":"","matches":[]},"title_matches":[{"start":0,"end":9}],"semantic_rank":0}],
+         "next_page_token":null,"executed_mode":"hybrid"}
+        """.utf8)
+    let chats = ClaudeAPI.chats(from: searchPage, account: mine) ?? []
+    check(chats.count == 2 && chats[0].isArchived && chats[0].isStarred && chats[0].project == "p-1"
+            && chats[1].titleMatches == [0..<9] && chats[0].snippetMatches == [2..<11],
+          "a found chat keeps its project, its archive and star, and where the query matched")
+    check(chats[1].openURL?.absoluteString == "https://claude.ai/chat/c-1", "a chat opens at its own page")
+
+    let sessionPage = Data("""
+        {"data":[
+          {"id":"cse_here","title":"Fix the graft build","status":"active","environment_kind":"bridge",
+           "last_event_at":"2026-11-07T09:00:00Z","config":{"sources":[]}},
+          {"id":"cse_cloud","title":"Graft release notes","status":"archived","environment_kind":"anthropic_cloud",
+           "updated_at":"2026-11-01T09:00:00Z","config":{"sources":[{"url":"https://github.com/a/claude-graft"}]}},
+          {"id":"cse_far","title":"Graft on the mini","status":"active","environment_kind":"bridge"},
+          {"id":"cse_carried","title":"Graft carried over","status":"active","environment_kind":"bridge"},
+          {"id":"cse_other","title":"Pico camera","status":"active","environment_kind":"bridge"}],
+         "next_cursor":"MTc5"}
+        """.utf8)
+    let sessions = ClaudeAPI.codeSessions(from: sessionPage)
+    check(sessions?.next == "MTc5" && sessions?.sessions.count == 5
+            && sessions?.sessions[1].inCloud == true && sessions?.sessions[1].isArchived == true
+            && sessions?.sessions[1].repository == "https://github.com/a/claude-graft",
+          "a session list is read with its cursor, where each ran, and its repository")
+    let transcriptHere = URL(fileURLWithPath: "/tmp/here.jsonl")
+    let listedAt = Date().addingTimeInterval(60)
+    let local = [
+        LocalCodeSession(bridgeIds: ["cse_here"], owner: "acct-mine", organization: "org-chat", title: "Fix the graft build",
+                         folder: "/Users/Shared/graft", transcript: transcriptHere,
+                         lastActive: Date(), folderIsHere: true),
+        LocalCodeSession(bridgeIds: ["cse_carried"], owner: "acct-mine", organization: "org-chat", title: "Graft carried over",
+                         folder: "/Users/someone-else/graft", transcript: URL(fileURLWithPath: "/tmp/c.jsonl"),
+                         lastActive: Date(), folderIsHere: false),
+        LocalCodeSession(bridgeIds: ["cse_deleted"], owner: "acct-mine", organization: "org-chat", title: "Graft notes, deleted",
+                         folder: "/Users/Shared/graft", transcript: URL(fileURLWithPath: "/tmp/d.jsonl"),
+                         lastActive: Date(), folderIsHere: true),
+        LocalCodeSession(bridgeIds: ["cse_someone"], owner: "acct-other", organization: "org-chat", title: "Graft, not this account",
+                         folder: "/Users/Shared/graft", transcript: URL(fileURLWithPath: "/tmp/o.jsonl"),
+                         lastActive: Date(), folderIsHere: true),
+    ]
+    let remote = sessions?.sessions ?? []
+    let hits = ClaudeAPI.codeHits("graft", account: mine, accountUuid: "acct-mine", organization: "org-chat",
+                                  remote: remote, complete: true, listedAt: listedAt, local: local)
+    func place(_ id: String) -> SearchHit.Place? { hits.first { $0.id == id }?.place }
+    check(place("cse_here") == .thisMac && place("cse_cloud") == .cloud && place("cse_far") == .otherMac
+            && place("cse_carried") == .otherMac,
+          "a Code session is placed on this Mac only when its transcript is here and its folder could be")
+    check(hits.first { $0.id == "cse_here" }?.folder == "/Users/Shared/graft"
+            && hits.first { $0.id == "cse_here" }?.titleMatches == [8..<13],
+          "a session found here carries its folder, and the word that matched its title")
+    check(!hits.contains { $0.id == "cse_other" },
+          "a session whose title and folder do not hold every word is left out")
+    let gone = hits.filter { $0.place == .goneFromClaude }
+    check(gone.count == 1 && gone.first?.title == "Graft notes, deleted" && gone.first?.openURL == nil
+            && gone.first?.transcript?.path == "/tmp/d.jsonl",
+          "a transcript of this account's that claude.ai no longer lists is found, and opens in Finder")
+    var continued = local[2]
+    continued.carriedOn = true
+    let carriedOn = ClaudeAPI.codeHits("graft", account: mine, accountUuid: "acct-mine", organization: "org-chat",
+                                       remote: remote, complete: true, listedAt: listedAt,
+                                       local: [local[0], local[1], continued, local[3]])
+    check(!carriedOn.contains { $0.place == .goneFromClaude },
+          "an earlier half of a conversation that goes on is not called gone from claude.ai")
+    let partial = ClaudeAPI.codeHits("graft", account: mine, accountUuid: "acct-mine", organization: "org-chat",
+                                     remote: remote, complete: false, listedAt: listedAt, local: local)
+    check(!partial.contains { $0.place == .goneFromClaude },
+          "nothing is called gone from claude.ai when the session list was not read to its end")
+    let otherOrg = ClaudeAPI.codeHits("graft", account: mine, accountUuid: "acct-mine", organization: "org-team",
+                                      remote: remote, complete: true, listedAt: listedAt, local: local)
+    let noOrg = ClaudeAPI.codeHits("graft", account: mine, accountUuid: "acct-mine", organization: nil,
+                                   remote: remote, complete: true, listedAt: listedAt, local: local)
+    check(!otherOrg.contains { $0.place == .goneFromClaude } && !noOrg.contains { $0.place == .goneFromClaude },
+          "a session owned under another organization than the list was read for is not called gone from claude.ai")
+    let stale = ClaudeAPI.codeHits("graft", account: mine, accountUuid: "acct-mine", organization: "org-chat",
+                                   remote: remote, complete: true, listedAt: Date().addingTimeInterval(-60),
+                                   local: local)
+    check(!stale.contains { $0.place == .goneFromClaude },
+          "a transcript that moved on after its session list was read is not called gone from claude.ai")
+    let listRead = Date()
+    check(ClaudeAPI.localReadServes(listRead.addingTimeInterval(1), list: listRead, now: listRead, lifetime: 120)
+            && !ClaudeAPI.localReadServes(listRead.addingTimeInterval(-1), list: listRead, now: listRead, lifetime: 120)
+            && !ClaudeAPI.localReadServes(listRead, list: listRead, now: listRead.addingTimeInterval(121), lifetime: 120),
+          "this Mac's transcripts are read again when a session list is newer than them, or they are two minutes old")
+    check(ClaudeAPI.codeMatch("mini graft", title: "Graft on the mini", also: []) != nil
+            && ClaudeAPI.codeMatch("graft cloud", title: "Graft release notes",
+                                   also: ["https://github.com/a/claude-graft"]) == nil,
+          "every word must be found, in any order, in the title or the folder")
+
+    let other = ClaudeAPI.chats(from: Data("""
+        {"data":[{"conversation":{"uuid":"o-1","name":"Lent pico"},"semantic_rank":0}]}
+        """.utf8), account: lent) ?? []
+    let order = ClaudeAPI.interleave([chats + hits, other]).map(\.id)
+    check(Array(order.prefix(3)) == ["c-1", "o-1", "c-2"],
+          "each account's best chat comes before any account's second")
+    check(order.dropFirst(3).first == "cse_here" || order.dropFirst(3).allSatisfy { $0.hasPrefix("cse_") || $0.hasPrefix("local:") },
+          "Code sessions follow the chats")
+
+    let bold = ClaudeAPI.highlighted("🙂 raspberry", [3..<12, 40..<50])
+    let strong = bold.runs.filter { $0.inlinePresentationIntent == .stronglyEmphasized }
+        .map { String(bold[$0.range].characters) }
+    check(strong == ["raspberry"],
+          "matches are counted in UTF-16 as the page counts them, and one past the end is dropped")
+
+    let now = Date()
+    let all = chats + hits
+    var filters = SearchFilters()
+    check(!all.filter { filters.admits($0, now: now) }.contains { $0.isArchived },
+          "a search starts with archived chats and sessions hidden, as claude.ai's box does")
+    filters.status = .archived
+    check(all.filter { filters.admits($0, now: now) }.map(\.id).sorted() == ["c-2", "cse_cloud"],
+          "archived alone shows only what was archived")
+    filters = SearchFilters(status: .any, place: .thisMac)
+    check(all.filter { filters.admits($0, now: now) }.map(\.id) == ["cse_here"],
+          "asking where a session ran leaves chats out")
+    filters = SearchFilters(status: .any, place: .goneFromClaude)
+    check(all.filter { filters.admits($0, now: now) }.count == 1, "gone from claude.ai can be asked for alone")
+    filters = SearchFilters(status: .any, project: .none)
+    check(all.filter { filters.admits($0, now: now) }.map(\.id) == ["c-1"],
+          "no project means a chat outside every project, not a Code session")
+    filters = SearchFilters(status: .any, project: .project("p-1"))
+    check(all.filter { filters.admits($0, now: now) }.map(\.id) == ["c-2"], "one project shows its chats")
+    filters = SearchFilters(status: .any, starredOnly: true)
+    check(all.filter { filters.admits($0, now: now) }.map(\.id) == ["c-2"], "starred only shows starred chats")
+    filters = SearchFilters(kind: .code, status: .any)
+    check(all.filter { filters.admits($0, now: now) }.allSatisfy { $0.kind == .code }, "Code sessions alone")
+    filters = SearchFilters(status: .any, age: .day)
+    let aged = [SearchHit(id: "x", account: mine, kind: .chat, title: "t", snippet: "", snippetMatches: [],
+                          titleMatches: [], project: nil, updated: now.addingTimeInterval(-2 * 86_400),
+                          isArchived: false, isStarred: false, place: nil, folder: nil, transcript: nil,
+                          rank: 0, openURL: nil)]
+    check(aged.filter { filters.admits($0, now: now) }.isEmpty, "the past day leaves out a chat two days old")
+    filters = SearchFilters(status: .any, account: lent)
+    check(([chats, other].joined()).filter { filters.admits($0, now: now) }.map(\.id) == ["o-1"],
+          "one account shows only what that account found")
+    check(!SearchFilters().isNarrowed && SearchFilters(starredOnly: true).isNarrowed,
+          "the filters know when they narrow anything")
+
+    // A sandbox of its own, so the transcripts the sweep checks above are not
+    // read here and these are not read there.
+    let saved = Graft.claudeProjectsOverride
+    Graft.claudeProjectsOverride = root.appending(path: "search-projects")
+    _ = makeTranscript(session: "aaaaaaaa-1111-4111-8111-111111111111", bridge: "cse_localone", title: "Graft here")
+    let elsewhere = Graft.claudeProjects.appending(path: "-Users-gone-work")
+    try! fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+    try! """
+        {"type":"bridge-session","sessionId":"s","bridgeSessionId":"cse_carriedone","lastSequenceNum":0,"ownerAccountUuid":"\(ownerAccount)","ownerOrganizationUuid":"\(ownerOrg)"}
+        {"promptId":"p","cwd":"/Users/nobody-who-lives-here-\(UUID().uuidString)/work","type":"user","message":{"role":"user","content":"hi"},"uuid":"u","timestamp":"2026-08-29T17:00:00.000Z"}
+        """.write(to: elsewhere.appending(path: "bbbbbbbb-1111-4111-8111-111111111111.jsonl"), atomically: true, encoding: .utf8)
+    let read = LocalCodeSessions.read()
+    check(read.first { $0.bridgeIds == ["cse_localone"] }.map { $0.folderIsHere && $0.title == "Graft here" } == true,
+          "this Mac's transcripts are found by the ids claude.ai lists their sessions under")
+    check(read.first { $0.bridgeIds == ["cse_carriedone"] }?.folderIsHere == false,
+          "a transcript carried from a home this Mac does not have is known as another Mac's")
+    check(read.first { $0.bridgeIds == ["cse_carriedone"] }?.organization == ownerOrg,
+          "a transcript here carries the organization it was owned under, as the sweep read it")
+    Graft.claudeProjectsOverride = saved
+
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    func source(_ name: String) -> String {
+        (try? String(contentsOf: repo.appending(path: "Sources/App/\(name)"), encoding: .utf8)) ?? ""
+    }
+    let center = source("ProjectCenter.swift")
+    let views = source("ProjectsView.swift")
+    let model = source("Projects.swift")
+    check(!center.isEmpty && !center.contains("Timer") && !center.contains("onReceive")
+            && !views.contains("Timer") && !views.contains("onReceive"),
+          "projects and searches are asked for when a person asks, never on a timer")
+    check(!center.contains("throw ClaudeWebSession.Failure.signedOut\n        } catch {\n            return (found, false)")
+            && center.contains("let code = await codeSessions(id, org: org, session: session)"),
+          "an account whose Code session list is refused still has its chats searched, and is not signed out for it")
+    check(center.contains("let local = await localSessions(readSince: code.read)")
+            && center.contains("organization: org, remote: code.sessions, complete: code.complete")
+            && center.contains("listedAt: code.read, local: local"),
+          "a search sets each account's session list beside a read of this Mac's transcripts made after it")
+    check(center.contains("askForProjectsNotYetAsked()") && !center.contains("if projects.isEmpty { refreshProjects() }")
+            && center.contains("filter { projectStates[$0] == nil }"),
+          "a search asks for projects only from accounts never asked, not from every account whenever none has any")
+    check(views.contains(".onSubmit { if !center.searching { center.search(query) } }"),
+          "Return held in the search field starts no second search while one is running, as the button starts none")
+    check(source("ArtifactExport.swift").contains("try await Task.detached(priority: .userInitiated) {")
+            && source("ArtifactExport.swift").contains("try await zip(folder"),
+          "a many-file export waits for its archive off the main thread")
+    // A note's text as Swift reads its literal: the closing delimiter's
+    // indentation off every line, and a line ending in a backslash joined to
+    // the next.
+    func notes(in text: String) -> [String] {
+        text.components(separatedBy: "static let note = L10n.text(\"\"\"\n").dropFirst().compactMap { rest in
+            guard let end = rest.range(of: "\"\"\")") else { return nil }
+            let lines = rest[..<end.lowerBound].components(separatedBy: "\n")
+            let indent = lines.last ?? ""
+            return lines.dropLast()
+                .map { $0.hasPrefix(indent) ? String($0.dropFirst(indent.count)) : "" }
+                .joined(separator: "\n").replacingOccurrences(of: "\\\n", with: "")
+        }
+    }
+    let pageNotes = notes(in: source("ArtifactsView.swift")) + notes(in: views)
+    func strings(_ language: String) -> [String: String] {
+        let file = repo.appending(path: "Resources/\(language).lproj/Localizable.strings")
+        return (try? Data(contentsOf: file)).flatMap {
+            try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: String]
+        } ?? [:]
+    }
+    let russianNotes = strings("ru")
+    check(pageNotes.count == 3 && !source("ArtifactsView.swift").contains("static let note = \"\"\"")
+            && !views.contains("static let note = \"\"\""),
+          "the Artifacts, Projects and Search Chats notes are each looked up in the catalog")
+    check(pageNotes.allSatisfy { note in russianNotes[note].map { $0 != note } ?? false },
+          "each of those notes reads in Russian when macOS does")
+    check(views.contains(".onSubmit { if !center.searching { center.search(query) } }") && !views.contains("onChange(of: query"),
+          "a search goes out on Return or the button, never as the query is typed")
+    check(!center.contains("URLSession") && !model.contains("URLSession"),
+          "projects and searches go from claude.ai's own page, never from a request Graft builds")
+    check(!model.contains(".write(") && !model.contains("saveTranscriptCache"),
+          "a search reads the sweep's transcript cache and never writes it")
+    check(source("ArtifactCenter.swift").contains(#"path.hasPrefix("/api/frame/") ? ArtifactAPI.headers"#),
+          "the artifact service's headers go to the artifact service alone")
+    check(center.contains("accounts.$accounts") && center.contains("accounts.$lastSignIn")
+            && !views.contains("ArtifactSignInWindow") && !center.contains("ArtifactSignInWindow")
+            && views.contains("accounts.signInNewAccount()"),
+          "one sign-in serves every pane: an account added or signed out in one is added or gone in all")
+    check(source("ArtifactCenter.swift").contains("guard loadGenerations[id] == generation, account(id) != nil else { return }")
+            && source("ArtifactCenter.swift").contains("artifacts = ArtifactAPI.merge(accounts.compactMap { lists[$0.id] })")
+            && !source("ArtifactCenter.swift").contains("merge(Array(lists.values))")
+            && center.contains("guard generation == self.searchGeneration, accounts.account(id) != nil else { continue }")
+            && center.contains("results = ClaudeAPI.interleave(accounts.accounts.compactMap { lists[$0.id] })")
+            && center.contains("guard accounts.account(id) != nil else { return }\n            projectLists[id] = found"),
+          "an account signed out while its list or search was running does not come back with what it found")
+    check(source("ArtifactCenter.swift").components(separatedBy: "lastSignIn = SignIn(").count == 2
+            && source("ArtifactCenter.swift").contains("ArtifactAccounts.signedIn(accounts, store: id, as: identity)")
+            && source("ArtifactCenter.swift").contains("for earlier in change.retired { retire(earlier) }"),
+          "a sign-in is announced under the store it was made in, whether it adds an account or finds one already there")
 }
 
 print("\n\(checks - failures)/\(checks) checks passed")

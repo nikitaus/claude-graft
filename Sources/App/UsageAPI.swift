@@ -18,8 +18,9 @@ enum UsageAPI {
         return URLSession(configuration: configuration)
     }()
 
+    /// Codable so the last answer can outlive the process (`live-usage.json`).
     struct Reading: Equatable, Codable {
-        /// Nil when the plan has no five-hour window, as Ultra does not.
+        /// Nil when the account has no five-hour limit.
         var fiveHour: Int?
         var week: Int
         var fiveHourReset: Date?
@@ -80,9 +81,9 @@ enum UsageAPI {
         let parsed = payload.flatMap { try? JSONSerialization.jsonObject(with: $0) }
         guard let body = parsed as? [String: Any], let reading = reading(from: body) else {
             // "Something unexpected" is all the window can say, and it is all
-            // it said to every Ultra account, refused for lacking a window that
-            // plan does not have. The shape names what changed; the values are
-            // left out, since a log is no place for an account's figures.
+            // it said to every Ultra account while the five-hour window was
+            // required. The shape names what changed; the values are left
+            // out, since a log is no place for an account's figures.
             let described: Any = parsed.map { shape(of: $0) } ?? "not JSON"
             Diagnostics.note("usage-unreadable", [
                 "bytes": payload?.count ?? 0,
@@ -94,19 +95,36 @@ enum UsageAPI {
         return reading
     }
 
+    /// Keys and the kind of value under each, nested, with no value itself.
+    static func shape(of value: Any, depth: Int = 4) -> Any {
+        switch value {
+        case let object as [String: Any]:
+            guard depth > 0 else { return "object" }
+            return object.mapValues { shape(of: $0, depth: depth - 1) }
+        case let array as [Any]:
+            guard depth > 0, let first = array.first else { return "array of \(array.count)" }
+            return [shape(of: first, depth: depth - 1), "\(array.count) items"] as [Any]
+        case is NSNull: return "null"
+        case is String: return "string"
+        case is NSNumber, is Int, is Double, is Bool: return "number"
+        default: return String(describing: type(of: value))
+        }
+    }
+
     /// Separated from the request so the shape of the answer can be tested.
     ///
-    /// Either window is enough. The five-hour one used to be required, and a
-    /// plan without it — Ultra, which is spent against the week alone — had
-    /// every answer refused as unexpected, leaving its figures to come off a
-    /// record days or weeks old.
-    ///
     /// The week is also in `limits`, as `weekly_all`, beside two dozen other
-    /// top-level keys that all came back null for that account. Taking it from
-    /// there when `seven_day` is not sent means the next window to go the same
-    /// way as `five_hour` does not refuse the answer a second time.
+    /// top-level keys that all came back null for an Ultra account. Taking it
+    /// from there when `seven_day` is not sent means the next window to go the
+    /// way `five_hour` went does not refuse the answer a second time.
     static func reading(from body: [String: Any]) -> Reading? {
+        // Since November 2026 an account with no five-hour limit is sent
+        // `five_hour: null`, or no key at all, while a limited one gets the
+        // window even idle, at zero. Anything else there is an answer this
+        // cannot read, and reading it as no limit would hide a real one.
+        let sent = body["five_hour"].map { !($0 is NSNull) } ?? false
         let session = window(body["five_hour"])
+        if sent, session == nil { return nil }
         let weekly = window(body["seven_day"])
             ?? limit(body["limits"]) { $0["kind"] as? String == "weekly_all" }
         guard session != nil || weekly != nil else { return nil }
@@ -125,22 +143,6 @@ enum UsageAPI {
                        plan: (body["subscription_type"] as? String)?.capitalized,
                        fable: fable?.used,
                        fableReset: fable?.resets)
-    }
-
-    /// Keys and the kind of value under each, nested, with no value itself.
-    static func shape(of value: Any, depth: Int = 4) -> Any {
-        switch value {
-        case let object as [String: Any]:
-            guard depth > 0 else { return "object" }
-            return object.mapValues { shape(of: $0, depth: depth - 1) }
-        case let array as [Any]:
-            guard depth > 0, let first = array.first else { return "array of \(array.count)" }
-            return [shape(of: first, depth: depth - 1), "\(array.count) items"] as [Any]
-        case is NSNull: return "null"
-        case is String: return "string"
-        case is NSNumber, is Int, is Double, is Bool: return "number"
-        default: return String(describing: type(of: value))
-        }
     }
 
     private static func window(_ value: Any?) -> (used: Int, resets: Date?)? {

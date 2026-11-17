@@ -62,13 +62,13 @@ opens and quits none.
     ./test-layout.sh               window layout from outside, both languages; needs Accessibility
     ./test-opening.sh              launch paths against disposable, signed-out profiles
     ./test-sidebar.sh              sidebar sync against real Chromium storage; needs Claude and Node
+    ./test-relay.sh                the shared-usage relay over loopback, against a stand-in service
     ./release.sh [--install]       tests, builds universal, draws the icon, signs, packages
 
-With only the Command Line Tools, build against the older SDK they ship, since
-the macOS 27 one needs Xcode's `SwiftUIMacros` and the suite passes without it —
-see [notes/updates-and-releases.md](notes/updates-and-releases.md):
-
-    SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./build.sh
+With only the Command Line Tools installed, the macOS 27 SDK they default to
+cannot compile the app's SwiftUI; put
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` in front of
+any of these. The why is in [notes/updates-and-releases.md](notes/updates-and-releases.md).
 
 ## Rules
 
@@ -104,6 +104,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 - **A source that moved is a re-pair, not a first pass:** `firstPass` is asked before any pair is dropped, and `repair` hands the old source its copies back first.
 - **Chats an account switch left behind are copied, never moved,** and nothing moves while any Claude is up.
 - **That offer is silenced at the door, never in the window.**
+- **A new Claude reads its own chats;** only `ContentView.add()` says so. `Shortcut`'s default and decoding stay `.main`, so no saved Claude changes what it reads.
 - **A store may spell account and organization by their first eight characters** — `counterpartDirectory`. Every walk asks `isDirectory`; `skills-plugin` is not an account.
 
 ### Session records — [notes/session-records.md](notes/session-records.md)
@@ -121,25 +122,78 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 
 ### Usage and credentials — [notes/usage-and-credentials.md](notes/usage-and-credentials.md)
 
-- **Credentials are borrowed, never taken.** Only the access token is decrypted; nothing is written back; the token goes to `api.anthropic.com` alone.
+- **Credentials are borrowed, never taken.** Only the access token is decrypted; nothing is written back; a token goes to `api.anthropic.com` alone, `platform.claude.com` sees only a pane sign-in's one-time code, and claude.ai sees only an artifact sign-in made in Graft's own window, which Graft never reads.
 - **A borrowed token touches no cache:** it goes out through `UsageAPI.session`, ephemeral with no `URLCache`; nothing names `URLSession.shared`, and a launch empties its cache.
 - **The keychain is asked once, and only when asking is the way through** — `ClaudeCredentials.mayRaiseDialog`, made silent by `SecKeychainSetUserInteractionAllowed`. A pass told no asks no other profile (`UsageMonitor.prompting`), and Start Session's follow-up refresh asks nobody.
 - **Only a person starts a session.** The suite fails on a fourth caller or one wired to `onAppear`, `onReceive` or a timer.
 - **One account, one figure:** both detail views read `UsageMonitor.entry(for:)`.
-- **Polling:** `mayUseCache` gives five minutes to a tick, two for an open profile, a minute for the dropdown, two seconds for a press; `arrival` queues rather than drops; failures back off and `Retry-After` wins until a failure arrives without one.
-- **A plan need not have a five-hour window.** Ultra has only the week: either window is enough, `fiveHour` is nil rather than zero, and the menu bar leads with the week. A profile's own sample needs only `sd`.
-- **A row says why its figure is not live** in the words of the error behind it (`failureNote`). Nothing `ClaudeCredentials` throws backs off (`backsOff`): it failed before anything was sent.
+- **No five-hour limit is not 0%:** `fiveHour` is nil for such an account, never zero; the menu bar shows its week as `W`, and Start Session is hidden.
+- **Polling:** `mayUseCache` gives five minutes to a tick, two for an open profile, a minute for the dropdown, two seconds for a press; `arrival` queues rather than drops; only the service's failures back off (`cameFromService`), a local one is retried next pass under its own name, and `Retry-After` wins until a failure arrives without one.
+- **The week has a second source:** `weekly_all` in `limits` stands in when `seven_day` is not sent, and a figure written with a fraction is read (`Graft.percentage`), in the answer and in a profile's own record alike.
+- **A row says why its figure is not live** (`failureLine`): a local failure by its own name, and a refused login or a rate limit apart from no answer. Each is logged once as it starts — `usage-failed`, `usage-login-unusable` by expiry and scope, `usage-unreadable` by shape — never by value or token.
 - **The last live answer outlives the process** in `live-usage.json`, loaded once on the serial queue before the cache is read or changed, so a restart shows it at its real age instead of falling back to the profile's record.
+
+### Shared usage — [notes/shared-usage.md](notes/shared-usage.md)
+
+- **Only `POST /v1/messages` changes accounts.** Everything else a conversation owns keeps the sender's token, and the Chat tab is never shared.
+- **What cannot change accounts goes out as it came,** byte for byte: an upgrade is spliced after its `101`, a chunked body forwarded as it arrives. Remote Control needs no syncing.
+- **Lending belongs to the Claude that borrows** — `usage-sharing.json`. One account is counted once, under the first of its names that can lend; the borrower's own account adds nothing.
+- **Claude Code is reached through `HTTPS_PROXY` and `NODE_EXTRA_CA_CERTS`, never an address,** and the port never moves from 47823.
+- **The lines go only into a closed Claude,** under `SidebarSync.withLaunchLock`; a launcher swaps only the exact value `pool/environment.json` expects. `PoolEnvironment.swift` alone names the file.
+- **The lines take nothing away:** a proxy or certificate a person set is left alone, and copies in `scopedEnvVars` come out whenever the profile is found closed. A name holding exactly Graft's value is Graft's whatever sits beside it: it comes out at the next close and keeps the relay up until then.
+- **No relay is worse than no sharing.** `graft-relay` outlives Graft; a launcher that cannot reach it opens without the lines, and the lines come out before the relay goes.
+- **A relay is replaced only by a Graft that can configure its successor** (`relayStep`): with the key shut nothing is configured, the relay there is kept with what it has, and the dropdown says lending is paused. One whose status will not decode is sent a bare quit.
+- **Graft going takes the lines with it.** `graft-launch --stop-sharing`, for the cask's uninstall, and the relay, once its own file is missing at two looks a minute apart, put each closed Claude's plain value back from the journal (`PoolEnvironment.takeOutLines`) and mark every entry unwanted; the relay stops lending and leaves once none still holds them.
+- **The authority vouches for `api.anthropic.com` alone,** its key deleted once it has signed and the identity imported with `kSecImportToMemoryOnly`, which is why sharing needs macOS 15. Only the relay holding `relay.lock` renews it.
+- **A sender is the SHA-256 of its bearer** against its profile's token cache; a request nobody owns passes through, and a pane sign-in's refresh token is never read. A config caught mid-write lends the last login read whole, ten minutes at most (`steady`).
+- **Which account answers:** room is under 98% of five hours and 99% of the week, soonest weekly reset first; a conversation stays while its cache lives, and a choice from the dropdown outranks both until a day of quiet.
+- **A conversation carrying reasoning stays where it was written:** `carriesBoundReasoning` holds it past its cache and moves it only when that account has no room, then leaves it there; a model is bound unless `reasoningTravels` names it. The holder is mapped to the name its account is counted under, and one no longer lent sends it home.
+- **A thread stays where it is stored:** a `continuesThread` request is held like reasoning, whatever the model, and only answers to requests carrying a thread say where a conversation is.
+- **A borrowed login's refusal is retried, never shown:** a 429 moves on, a 401 marks that login refused, and a 400, 403 or 404 sends the request home — except `thread_not_found` on a moved thread, which Claude Code must hear to start it again where it went. Home is the sender's next attempt, and every plan ends with one (`PoolState.plan`), so a lent account's answer is never the one delivered.
+- **Some requests never move:** a body referring to a file, container or MCP server by value (`accountBoundMarks`, never the bare key, which a tool schema can carry), or one that is encoded.
+- **The dropdown's front Claude is `FrontmostClaude`'s,** and its watch on the relay ends in `popoverDidClose`, never in the view.
+- **The conversation on screen runs across the bar** while it is there, drawn at a fixed width (`NewChatTicker`): the one Claude's own records focused last (`lastFocusedAt`, owned by the store it was first seen in, since the mirror copies it), by its title alone if the relay never carried it, and only where no record says, the one typed into last (`promptedAt`, a turn on a thread). `StoreWatch` wakes a look when a store changes. The text gives way when it would push the item out of the bar (`keepReachable`).
+- **A conversation archived or deleted leaves the bar and the dropdown** (`lookUpRecords`): its own Claude's records decide, a record is gone only after missing twice, and deleting the one on screen keeps its focus.
+
+### Artifacts — [notes/artifacts.md](notes/artifacts.md)
+
+- **An artifact sign-in stays in its web store.** One `WKWebsiteDataStore` per account, loaded only with claude.ai; requests go out from a claude.ai page by `callAsyncJavaScript`, never from `URLSession`, and nothing reads `httpCookieStore`. Signing out removes the store. Claude profiles' cookies are never decrypted.
+- **A second sign-in to a listed account keeps the new store;** the record moves to it and the old store goes (`ArtifactAccounts.signedIn`).
+- **A store is removed only once nothing holds it:** `retire` closes the session and waits for `released()`, a sign-in window lets go before acting, a failed removal is logged and retried, and stores not in a readable `artifact-accounts.json` go at launch.
+- **WebKit is made ready before a store is listed or removed** (`prepareStores`): on macOS 27 either call crashes a process in which no store has done any work.
+- **Every `/api/frame` request carries `X-Frame-CP: go`,** or the service answers 404 as though the artifact did not exist.
+- **Only a 401, or a 403 from `/api/account`, is signed out;** any other 403 asks `/api/account` once and otherwise goes back as a refusal (`ArtifactAPI.meansSignedOut`).
+- **Artifacts are asked for when the list is shown or refreshed, never on a timer.**
+- **Groups are Graft's,** in `artifact-groups.json`; each person is invited with the group's role for them, an address missing from `roles` is a `reader`, and only the owner is offered a change.
+- **An unreadable groups or accounts file is set aside, never saved over** (`ArtifactFiles.read`), and groups are read one by one (`readEach`).
+- **A role an artifact does not take is lowered, never raised** — `ArtifactRole.offered(by:)`, asked of the permissions before every share.
+- **Only what the list allows is offered:** rename and delete to the owner, duplicate where `duplicable` says so.
+- **An access change is sent only when it changes something** (`ArtifactAccess.changes`, asked of the list and of `read.mode`); an organization-shared artifact checks its own entry (`menuChoice`).
+- **An export is drawn where no sign-in is.** Files come from the file host with `credentials: "omit"` into a temporary folder, and `ArtifactRenderer` draws them in a non-persistent store that follows no link out.
+- **Sign-in is by emailed code alone,** and every way into one says so (`ArtifactsView.signInHint`).
+
+### Projects and search — [notes/projects-and-search.md](notes/projects-and-search.md)
+
+- **One sign-in serves Artifacts, Projects and Search Chats.** Accounts live in `ArtifactCenter` alone; `ProjectCenter` follows `$accounts` and `$lastSignIn` and keeps no sign-in of its own.
+- **The `X-Frame-*` headers go to `/api/frame/` alone;** the rest of claude.ai is asked as its pages ask it.
+- **A search goes out on Return or the button, never as the query is typed,** and a filter asks nothing.
+- **A Code session is placed by `bridgeSessionId`,** the same `cse_…` the server lists, and its folder by `sessionFolderIsHere`.
+- **Gone from claude.ai is claimed only after the account's whole session list was read.** A deleted chat cannot be found and is never claimed.
+- **Gone is claimed against the list it was read with:** the transcript's `ownerOrganizationUuid` must be that list's organization and its last line older than the list; the local read is never older than the list it stands beside (`localReadServes`).
+- **An earlier half of a conversation still going is never gone** — a transcript a record names in `priorCliSessionIds` is `carriedOn`.
+- **The sweep's transcript cache is read, never written,** from a search.
 
 ### Interface — [notes/interface.md](notes/interface.md)
 
 - **⌘Q does not quit** while the status item is reachable; `QuitPolicy` lets through Quit, logout and an update's relaunch.
 - **A status item that exists is not one you can click:** `MenuBarPlacement.isReachable`, which counts the notch as out of reach.
 - **The Dock icon goes only when the item can be reached** — `WindowPolicy`, asked when a window closes and again `placementGrace` after a hidden launch.
-- **`HSplitView`, not `NavigationSplitView`,** and notices sit beside the split view in a vertical stack.
+- **The window's root is a `NavigationSplitView` with a real sidebar;** notices go inside the detail column, never above the split view. The suite fails if the sidebar loses its behaviour or full height, or the title crosses its edge.
 - **Every control is named and identified by hand** with `identified`, on the control, never on a stack. Never call `NSApp.setAccessibilityWindows`.
 - **No `MenuBarExtra`. Nothing blocking in a view body. Long-lived objects live in `enum Shared`.**
+- **The window fits at 820×560 without scrolling,** every page, and Settings fits its own: a note is one line (`OneLineNote`), its paragraph behind an `InfoButton`.
 - **A running Claude keeps its own Dock icon and name;** the menu bar says which one is in front instead.
+- **A colour is handed out once and never twice** (`IconPreset.next`): a new Claude or lent account takes the first free one; nothing recolours what exists, and an account that is a Claude here wears that Claude's.
 
 ### Updates and releases — [notes/updates-and-releases.md](notes/updates-and-releases.md), [notes/update-relaunch.md](notes/update-relaunch.md)
 
@@ -153,6 +207,7 @@ see [notes/updates-and-releases.md](notes/updates-and-releases.md):
 - **`sparkle:minimumAutoupdateVersion` 1.1.0 is a floor** on every entry from 1.1.0 on, and that release needs a note.
 - **The feed keeps every release** (`--maximum-versions 0`), **and its URL never changes.**
 - **The account a build updates from is read out of `SUFeedURL`;** `release.sh` derives owner and repository from it. This fork publishes from its own feed with its own key — `docs/appcast.xml` read raw off main, no site — and releases run by hand from main in `.github/workflows/release.yml` with the `SPARKLE_PRIVATE_KEY` secret.
+- **What's New and Report a Problem go where the feed is published** (`Links.published`, read out of `SUFeedURL`); the site, the source, LinkedIn and the tip jar credit the original, and nothing offers its developer's address for a copy they did not build.
 
 ### Sidebar and desktop settings — [notes/sidebar-and-settings.md](notes/sidebar-and-settings.md)
 
